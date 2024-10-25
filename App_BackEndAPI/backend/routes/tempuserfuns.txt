@@ -1,0 +1,269 @@
+// Get Profile Picture by ID
+// router.get('/:id/profilePicture', async (req, res) => {
+//     try {
+//         const user = await User.findById(req.params.id).select('profilePicture');
+//         if (!user || !user.profilePicture) return res.status(404).send('Profile picture not found');
+//         const mimeType = await detectFileType(user.profilePicture);
+//         res.set('Content-Type', mimeType);
+//         res.send(user.profilePicture);
+//     } catch (err) {
+//         handleError(res, err);
+//     }
+// });
+
+// // Connect User by  ID
+// router.post('/connect/:id', auth, getCurrentUser, async (req, res) => {
+//     try {
+//         const targetUser = await User.findById(req.params.id);
+//         if (!targetUser) return res.status(404).send('User not found');
+
+//         if (req.currentUser.blockedUsers.includes(targetUser._id)) {
+//             return res.status(403).send('Cannot connect with this user as they are blocked');
+//         }
+
+//         if (targetUser.connections.includes(req.currentUser._id)) {
+//             return res.status(400).send('Already connected');
+//         }
+
+//         targetUser.connections.push(req.currentUser._id);
+//         await targetUser.save();
+
+//         res.send('Connection request sent');
+//     } catch (err) {
+//         handleError(res, err);
+//     }
+// });
+
+// // Block User
+// router.post('/block/:id', auth, getCurrentUser, async (req, res) => {
+//     try {
+//         const userToBlock = await User.findById(req.params.id);
+//         if (!userToBlock) return res.status(404).send('User not found');
+
+//         if (req.currentUser._id.equals(userToBlock._id)) {
+//             return res.status(400).send('You cannot block yourself');
+//         }
+
+//         if (!req.currentUser.blockedUsers.includes(userToBlock._id)) {
+//             req.currentUser.blockedUsers.push(userToBlock._id);
+//             req.currentUser.connections.pull(userToBlock._id); // Remove from connections when blocked
+//             await req.currentUser.save();
+
+//             return res.status(200).send('User blocked');
+//         } else {
+//             return res.status(400).send('User already blocked');
+//         }
+//     } catch (err) {
+//         handleError(res, err);
+//     }
+// });
+
+// // Unblock User
+// router.post('/unblock/:id', auth, getCurrentUser, async (req, res) => {
+//     try {
+//         const userToUnblock = await User.findById(req.params.id);
+//         if (!userToUnblock) return res.status(404).send('User not found');
+
+//         if (req.currentUser.blockedUsers.includes(userToUnblock._id)) {
+//             req.currentUser.blockedUsers.pull(userToUnblock._id); // Unblock the user
+//             await req.currentUser.save();
+
+//             return res.status(200).send('User unblocked');
+//         } else {
+//             return res.status(400).send('User is not blocked');
+//         }
+//     } catch (err) {
+//         handleError(res, err);
+//     }
+// });
+
+// // Disconnect User
+// router.post('/disconnect/:id', auth, getCurrentUser, async (req, res) => {
+//     try {
+//         const targetUser = await User.findById(req.params.id);
+//         if (!targetUser) return res.status(404).send('User not found');
+
+//         req.currentUser.connections.pull(targetUser._id);
+//         await req.currentUser.save();
+
+//         res.send('Disconnected');
+//     } catch (err) {
+//         handleError(res, err);
+//     }
+// });
+
+
+import express from 'express';
+import Chat from '../models/Chat.js';
+import User from '../models/User.js'; // Import User model
+import { auth } from '../middleware/auth.js';
+import upload from '../middleware/upload.js'; // Import multer for file uploads
+
+const router = express.Router();
+
+// Start a Chat
+router.post('/start/:id', auth, async (req, res) => {
+  try {
+    const userToChat = await User.findById(req.params.id);
+    if (!userToChat) return res.status(404).send('User not found');
+
+    const chat = new Chat({
+      participants: [req.user._id, req.params.id],
+      privateChat: req.body.privateChat || false,
+      deleteAt: req.body.deleteAt || null // Optional delete time for private chat
+    });
+    await chat.save();
+
+    res.status(201).json(chat);
+  } catch (err) {
+    res.status(400).send(err.message);
+  }
+});
+
+// Send a Message
+router.post('/:chatId/message', auth, async (req, res) => {
+  try {
+    const chat = await Chat.findById(req.params.chatId);
+    if (!chat) return res.status(404).send('Chat not found');
+
+    const message = { 
+      sender: req.user._id, 
+      content: req.body.content, 
+      file: req.body.file 
+    };
+
+    chat.messages.push(message);
+    await chat.save();
+
+    res.status(201).json(chat);
+  } catch (err) {
+    res.status(400).send(err.message);
+  }
+});
+
+// Fetch a Chat (with participants and messages populated)
+router.get('/:chatId', auth, async (req, res) => {
+  try {
+    const chat = await Chat.findById(req.params.chatId)
+      .populate('participants', '-password') // Populate participants without password
+      .populate('messages.sender', 'username'); // Populate sender with only username
+
+    if (!chat) return res.status(404).send('Chat not found');
+
+    res.json(chat);
+  } catch (err) {
+    res.status(400).send(err.message);
+  }
+});
+
+// Send a Message with File
+router.post('/:chatId/message', [auth, upload.single('file')], async (req, res) => {
+  try {
+    const chat = await Chat.findById(req.params.chatId);
+    if (!chat) return res.status(404).send('Chat not found');
+
+    const message = {
+      sender: req.user._id,
+      content: req.body.content || '', // Optional message text
+      file: req.file ? req.file.buffer : null // Store file as Buffer in the database
+    };
+
+    chat.messages.push(message);
+    await chat.save();
+
+    res.status(201).json(chat);
+  } catch (err) {
+    res.status(400).send(err.message);
+  }
+});
+
+// Get a File from a Chat Message
+router.get('/:chatId/message/:messageId/file', auth, async (req, res) => {
+  try {
+    const chat = await Chat.findById(req.params.chatId);
+    if (!chat) return res.status(404).send('Chat not found');
+
+    const message = chat.messages.id(req.params.messageId);
+    if (!message || !message.file) return res.status(404).send('File not found');
+
+    res.set('Content-Type', 'application/octet-stream'); // Set the correct content type for download
+    res.send(message.file); // Send the file buffer to the client
+  } catch (err) {
+    res.status(400).send(err.message);
+  }
+});
+
+export default router;
+
+// Load Audio Messages in Playable Format
+router.get('/:username/messages/audio/html', [auth, getCurrentUser, isConnected], async (req, res) => {
+    const { username } = req.params;
+    const currentUser = req.currentUser;
+
+    try {
+        const chat = await Chat.findOne({
+            participants: { $all: [currentUser._id, req.targetUser._id] },
+        }).select('messages').populate('messages.sender', 'username');
+
+        if (!chat) {
+            return res.status(404).send('Chat not found.');
+        }
+
+        // Build the HTML structure for audio messages
+        let html = `
+            <style>
+                .audio-container {
+                    padding: 10px;
+                    max-width: 500px;
+                    font-family: Arial, sans-serif;
+                }
+                .audio-message {
+                    margin: 5px 0;
+                    padding: 10px;
+                    border: 1px solid #ccc;
+                    border-radius: 5px;
+                    background-color: #f9f9f9;
+                }
+                .username {
+                    font-weight: bold;
+                }
+                .timestamp {
+                    font-size: 0.8em;
+                    color: #555;
+                }
+            </style>
+            <div class="audio-container">
+        `;
+
+        // Filter messages to include only those with audio files
+        const audioMessages = chat.messages.filter(message => message.fileType.startsWith('audio/'));
+
+        audioMessages.forEach(message => {
+            const senderUsername = message.sender ? message.sender.username : 'Unknown User';
+            const createdAt = new Date(message.createdAt).toLocaleTimeString();
+
+            // Convert file buffer to Base64 string and log the file type for debugging
+            const audioSrc = `data:${message.fileType};base64,${message.file.toString('base64')}`;
+            console.log('Serving audio message with MIME type:', message.fileType);
+
+            // Append audio message HTML with fallback sources and error handling
+            html += `
+                <div class="audio-message">
+                    <span class="username">${senderUsername}</span>
+                    <span class="timestamp">${createdAt}</span>
+                    <audio controls onerror="alert('Error loading audio')">
+                        <source src="${audioSrc}" type="${message.fileType}">
+                        <source src="${audioSrc}" type="audio/mpeg"> <!-- Fallback to mp3 -->
+                        <source src="${audioSrc}" type="audio/ogg">  <!-- Fallback to ogg -->
+                        Your browser does not support the audio tag.
+                    </audio>
+                </div>
+            `;
+        });
+
+        html += '</div>'; // Close audio container
+        res.status(200).send(html); // Send the constructed HTML
+    } catch (err) {
+        res.status(500).send('Server error: ' + err.message);
+    }
+});
