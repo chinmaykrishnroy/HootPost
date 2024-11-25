@@ -3,4 +3,4 @@
 ![Untitled design](https://github.com/user-attachments/assets/e61c733d-7ec3-4e5f-b8fc-085a77d8888b)
 A cross-platform open-source social media application designed for Android and iOS, leveraging React Native for an elegant user interface and Node.js, Express, and MongoDB for a robust backend. HootPost provides key features such as real-time messaging, profile customization, connection management, and content publishing. It ensures data security with hashed credentials and temporary media links via Amazon S3, enhancing privacy and content protection. The app is optimized for scalability, supporting over 25,000 users, and delivers a seamless, crash-free experience with a user-centric design and a 99% crash-free rate.
 ## Still in development and testing, beta release will be published soon.
-![hoot](https://github.com/user-attachments/assets/1249972d-ffb2-4976-9e99-7ed6991d68d5)
+![hootpostt](https://github.com/user-attachments/assets/03fd3f7e-4c89-4b70-85ed-2e9606898f97)
