@@ -11,6 +11,8 @@ import {
   markMessagesRead,
   messageTypeFromMime,
   participantKeyFor,
+  serializeChat,
+  serializeChats,
   serializeMessage,
   serializeMessages,
 } from "../services/chatService.js";
@@ -24,12 +26,6 @@ const findDirectChat = async (currentUser, targetUser) => {
   return chat;
 };
 
-const unreadCountFor = (chat, userId) => {
-  const key = userId.toString();
-  if (chat.unreadCounts instanceof Map) return chat.unreadCounts.get(key) || 0;
-  return chat.unreadCounts?.[key] || 0;
-};
-
 export const listChats = asyncHandler(async (req, res) => {
   const chats = await Chat.find({ participants: req.currentUser._id })
     .sort({ lastMessageAt: -1, updatedAt: -1 })
@@ -38,18 +34,21 @@ export const listChats = asyncHandler(async (req, res) => {
     .populate("lastMessage")
     .lean();
 
-  const response = await Promise.all(chats.map(async (chat) => ({
-    ...chat,
-    lastMessage: chat.lastMessage ? await serializeMessage(chat.lastMessage) : null,
-    unreadCount: unreadCountFor(chat, req.currentUser._id),
-  })));
-
-  res.status(200).json({ chats: response });
+  res.status(200).json({ chats: await serializeChats(chats, req.currentUser._id) });
 });
 
 export const startChat = asyncHandler(async (req, res) => {
   const chat = await ensureDirectChat(req.currentUser, req.targetUser);
-  res.status(201).json(chat);
+  const hydrated = await Chat.findById(chat._id)
+    .populate("participants", "username firstName lastName profilePicture profilePictureThumb")
+    .populate("lastMessage");
+  const serialized = await serializeChat(hydrated, req.currentUser._id);
+  emitChatEvent(req.io, hydrated, "chat:started", {
+    chat: serialized,
+    createdBy: req.currentUser._id,
+    username: req.currentUser.username,
+  });
+  res.status(201).json(serialized);
 });
 
 export const loadChat = asyncHandler(async (req, res) => {
@@ -68,7 +67,7 @@ export const loadChat = asyncHandler(async (req, res) => {
   emitChatEvent(req.io, chat, "chat:delivered", { chatId: chat._id, userId: req.currentUser._id });
 
   res.status(200).json({
-    chat,
+    chat: await serializeChat(chat, req.currentUser._id),
     messages: await serializeMessages(page.items),
     nextCursor: page.nextCursor,
     hasMore: page.hasMore,

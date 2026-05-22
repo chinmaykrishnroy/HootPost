@@ -11,6 +11,7 @@ import LineEdit from "@/components/LineEdit";
 import ProfilePictureModal from "@/components/ProfilePictureModal";
 import CustomModal from "@/components/CustomModal";
 import PostTile from "@/components/PostTile";
+import HeaderBackButton from "@/components/HeaderBackButton";
 
 const SORT_POSTS_NEWEST_FIRST = true;
 
@@ -478,7 +479,7 @@ export const UserScreenOptions = ({ navigation }) => {
             style={{ tintColor: "#f33eb7" }}
           />
         </TouchableOpacity>
-      ) : null,
+      ) : <HeaderBackButton navigation={navigation} />,
   };
 };
 

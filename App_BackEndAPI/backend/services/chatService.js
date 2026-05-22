@@ -35,12 +35,50 @@ export const serializeMessage = async (message) => {
 export const serializeMessages = async (messages) =>
   Promise.all(messages.map(serializeMessage));
 
+const unreadCountFor = (chat, userId) => {
+  const key = userId.toString();
+  if (chat.unreadCounts instanceof Map) return chat.unreadCounts.get(key) || 0;
+  return chat.unreadCounts?.[key] || 0;
+};
+
+const serializeParticipant = async (participant) => {
+  const raw = typeof participant.toObject === "function" ? participant.toObject() : participant;
+  return {
+    _id: raw._id,
+    username: raw.username,
+    firstName: raw.firstName,
+    lastName: raw.lastName,
+    profilePicture: await signMediaUrl(raw.profilePictureThumb || raw.profilePicture, 300),
+  };
+};
+
+export const serializeChat = async (chat, currentUserId) => {
+  const raw = typeof chat.toObject === "function" ? chat.toObject() : chat;
+  return {
+    _id: raw._id,
+    participants: await Promise.all((raw.participants || []).map(serializeParticipant)),
+    participantKey: raw.participantKey,
+    createdBy: raw.createdBy,
+    lastMessage: raw.lastMessage && raw.lastMessage.content !== undefined
+      ? await serializeMessage(raw.lastMessage)
+      : raw.lastMessage || null,
+    lastMessageAt: raw.lastMessageAt,
+    unreadCount: currentUserId ? unreadCountFor(raw, currentUserId) : 0,
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
+  };
+};
+
+export const serializeChats = async (chats, currentUserId) =>
+  Promise.all(chats.map((chat) => serializeChat(chat, currentUserId)));
+
 export const emitChatEvent = (io, chat, eventName, payload) => {
   const realtime = io?.of("/realtime");
   if (!realtime) return;
   realtime.to(`chat:${chat._id}`).emit(eventName, payload);
   for (const participantId of chat.participants) {
-    realtime.to(`user:${participantId}`).emit(eventName, payload);
+    const roomId = participantId?._id || participantId;
+    realtime.to(`user:${roomId}`).emit(eventName, payload);
   }
 };
 

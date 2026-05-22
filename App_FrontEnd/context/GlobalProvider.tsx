@@ -1,9 +1,7 @@
 import { getCurrentUser } from "@/lib/auth";
 import { createContext, useContext, useState, useEffect } from "react";
 import { useRouter } from 'expo-router'; 
-import { io } from 'socket.io-client';
-import { SOCKET_URL } from '../config.js';
-import { getSessionToken } from "@/lib/apiClient";
+import { disconnectRealtimeSocket, getRealtimeSocket } from "@/lib/realtime";
 
 interface User {
   userId: string;
@@ -38,19 +36,19 @@ const GlobalProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
   const router = useRouter();
 
   useEffect(() => {
-    let socket: ReturnType<typeof io> | null = null;
+    let socket: Awaited<ReturnType<typeof getRealtimeSocket>> | null = null;
     let cancelled = false;
 
     const handleSessionRevoked = () => {
       setIsLoggedIn(false);
       setUser(null);
+      disconnectRealtimeSocket();
       router.replace('/sign-in');
     };
 
     const connectSocket = async () => {
-      const token = await getSessionToken();
-      if (!token || cancelled) return;
-      socket = io(SOCKET_URL, { auth: { token } });
+      socket = await getRealtimeSocket();
+      if (!socket || cancelled) return;
       socket.on('session:revoked', handleSessionRevoked);
       socket.on('sessions:changed', () => {});
       socket.on('notification:new', () => {});
@@ -60,7 +58,6 @@ const GlobalProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
     return () => {
       cancelled = true;
       socket?.off('session:revoked', handleSessionRevoked);
-      socket?.disconnect();
     };
   }, [isLoggedIn]);
 

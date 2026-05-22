@@ -1,11 +1,11 @@
 import { View, Image, useColorScheme  } from "react-native";
-import React, { useEffect } from "react";
+import React from "react";
 import { Tabs } from "expo-router";
 import { icons } from "../../constants";
-import * as SystemUI from "expo-system-ui";
 import { HomeScreenOptions } from "./home";
 import { UserScreenOptions } from "./user";
 import { ChatScreenOptions } from "./chat";
+import { SearchScreenOptions } from "./search";
 
 const TabIcon = ({ icon, color }) => {
   return (
@@ -45,6 +45,19 @@ const TabLayout = () => {
           tabBarIcon: ({ color, focused }) => (
             <TabIcon
               icon={icons.home}
+              color={color}
+              focused={focused}
+            />
+          ),
+        })}
+      />
+      <Tabs.Screen
+        name="search"
+        options={({ navigation }) => ({
+          ...SearchScreenOptions({ navigation }),
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon
+              icon={icons.search}
               color={color}
               focused={focused}
             />

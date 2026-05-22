@@ -199,11 +199,32 @@ export const viewRequests = asyncHandler(async (req, res) => {
 });
 
 export const viewConnections = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.currentUser._id)
-    .populate("connections", "username firstName lastName profilePicture profilePictureThumb");
+  const paginated = req.query.paginated === "true" || req.query.limit || req.query.offset;
+  const limit = Math.min(Math.max(Number(req.query.limit) || 25, 1), 100);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+  const user = await User.findById(req.currentUser._id).select("connections");
   if (!user) throw notFound("User not found.");
-  const response = await Promise.all(user.connections.map((connection) => serializeUser(connection, req.currentUser)));
-  res.status(200).json(response);
+  const connectionIds = user.connections || [];
+  const pageIds = paginated ? connectionIds.slice(offset, offset + limit + 1) : connectionIds;
+  const connections = await User.find({ _id: { $in: pageIds } })
+    .select("username firstName lastName profilePicture profilePictureThumb blockedUsers connections connectionRequests createdAt bio sex");
+  const byId = new Map(connections.map((connection) => [connection._id.toString(), connection]));
+  const orderedConnections = pageIds
+    .map((id) => byId.get(id.toString()))
+    .filter((connection) => connection && assertVisibleUser(req.currentUser, connection));
+  const visiblePage = paginated ? orderedConnections.slice(0, limit) : orderedConnections;
+  const response = await Promise.all(visiblePage.map((connection) => serializeUser(connection, req.currentUser)));
+
+  if (!paginated) {
+    res.status(200).json(response);
+    return;
+  }
+
+  res.status(200).json({
+    items: response,
+    nextOffset: offset + response.length < connectionIds.length ? offset + limit : null,
+    hasMore: offset + response.length < connectionIds.length,
+  });
 });
 
 export const unsendRequest = asyncHandler(async (req, res) => {

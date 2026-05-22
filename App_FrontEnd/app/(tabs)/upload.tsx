@@ -24,6 +24,7 @@ import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { icons } from '@/constants';
+import HeaderBackButton from '@/components/HeaderBackButton';
 
 const PREPARED_UPLOAD_KEY = 'hootpost:prepared-upload';
 const MAX_SELECTION = 10;
@@ -595,7 +596,7 @@ const Upload = () => {
           </Text>
         </TouchableOpacity>
       ),
-      headerLeft: () => null,
+      headerLeft: () => <HeaderBackButton navigation={navigation} />,
     });
   }, [isPreparing, navigation, preparePost]);
 

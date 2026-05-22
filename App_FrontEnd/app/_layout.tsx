@@ -68,6 +68,18 @@ const RootLayout = () => {
           name="my-posts"
           options={{ headerShown: false }}
         />
+        <Stack.Screen
+          name="chat-connections"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="chat-room"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="chat-attachments"
+          options={{ headerShown: false }}
+        />
       </Stack>
     </GlobalProvider>
     </GestureHandlerRootView>
