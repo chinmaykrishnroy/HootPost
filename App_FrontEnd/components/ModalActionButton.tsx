@@ -22,9 +22,10 @@ const ModalActionButton = ({
 
   return (
     <TouchableOpacity
+      activeOpacity={0.88}
       disabled={disabled}
       onPress={onPress}
-      className={`flex-1 ${background} rounded-md min-h-[48px] px-4 items-center justify-center ${disabled ? 'opacity-70' : ''} ${containerClassName}`}
+      className={`flex-1 ${background} rounded-xl min-h-[52px] px-3 items-center justify-center ${disabled ? 'opacity-70' : ''} ${containerClassName}`}
     >
       <Text className={`${textColor} font-spotifymixuititleextrabold text-center`} numberOfLines={1}>
         {title}

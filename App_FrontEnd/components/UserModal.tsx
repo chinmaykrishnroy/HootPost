@@ -26,8 +26,11 @@ const UserModal = ({ userId, isVisible, onClose }) => {
   const { user: globalUser } = useGlobalContext();
   const [userData, setUserData] = useState(null);
   const { width } = Dimensions.get('window');
+  const cardPadding = 12;
+  const buttonGap = 12;
   const modalWidth = Math.min(width - 24, 420);
-  const mediaSize = modalWidth - 24;
+  const contentWidth = modalWidth - cardPadding * 2;
+  const mediaSize = contentWidth;
   const [loadingConnect, setLoadingConnect] = useState(false);
   const [loadingBlock, setLoadingBlock] = useState(false);
   const [loadingDisconnect, setLoadingDisconnect] = useState(false);
@@ -176,7 +179,7 @@ const UserModal = ({ userId, isVisible, onClose }) => {
       <TouchableWithoutFeedback onPress={onClose}>
         <View className="flex-1 justify-center items-center bg-black/60">
           <TouchableWithoutFeedback onPress={() => {}}>
-            <View className="p-3 bg-black2-200 rounded-3xl" style={{ width: modalWidth }}>
+            <View className="bg-black2-200 rounded-3xl border border-[#333]" style={{ width: modalWidth, padding: cardPadding }}>
               <View className="flex-row items-center mb-3">
                 <View className="w-8" />
                 <Text className="text-pink-100 font-spotifymixuititle text-4xl flex-1 text-center" numberOfLines={1}>
@@ -191,7 +194,7 @@ const UserModal = ({ userId, isVisible, onClose }) => {
                 </TouchableOpacity>
               </View>
 
-              <View className="mb-3 overflow-hidden relative self-center" style={{ width: mediaSize, height: mediaSize }}>
+              <View className="mb-3 overflow-hidden relative self-center rounded-3xl" style={{ width: mediaSize, height: mediaSize }}>
                 {isLoading && !hasError && (
                   <View className="absolute top-0 left-0 right-0 bottom-0 flex justify-center items-center">
                     <ActivityIndicator 
@@ -205,7 +208,7 @@ const UserModal = ({ userId, isVisible, onClose }) => {
                     ? { uri: userData.profilePicture }
                     : images.owl
                   }
-                  className={`w-full h-full aspect-square rounded-3xl ${hasError ? 'hidden' : 'flex'}`}
+                  className={`w-full h-full aspect-square ${hasError ? 'hidden' : 'flex'}`}
                   contentFit="cover"
                   onLoadStart={() => {
                     setIsLoading(true); 
@@ -226,7 +229,7 @@ const UserModal = ({ userId, isVisible, onClose }) => {
                 )}
               </View>
 
-              <View className="flex-row justify-between items-start px-1">
+              <View className="flex-row justify-between items-start">
                 <Text
                   className={`${
                       userData.sex === "Male"
@@ -247,26 +250,24 @@ const UserModal = ({ userId, isVisible, onClose }) => {
                 <Text className="text-pink-200 font-spotifymixui text-xs pt-1.5">Joined {formatDate(userData.joined)}</Text>
               </View>
               
-              <Text className="text-gray-300 font-spotifymixui text-lg text-center mt-2 mb-3 px-1">{userData.bio}</Text>
+              <Text className="text-gray-300 font-spotifymixui text-lg text-center mt-2 mb-3">{userData.bio}</Text>
 
-              <View className="flex-row gap-3 px-1 pb-1">
-                {globalUser.username !== userData.username && (
-                  <View className="flex-row gap-3 flex-1">
-                    <ModalActionButton
-                      title={connectButtonTitle}
-                      onPress={userData.isConnected ? null : userData.hasRequested ? handleUnsendRequest : handleConnect}
-                      disabled={connectButtonDisabled || loadingConnect}
-                    />
-                    <ModalActionButton
-                      title={userData.isBlocked ? "BLOCKED" : userData.isConnected ? "Disconnect" : "Block"}
-                      onPress={userData.isConnected ? handleDisconnect : handleBlock}
-                      danger={!userData.isConnected}
-                      variant={userData.isConnected ? "primary" : "primary"}
-                      disabled={loadingBlock || loadingDisconnect}
-                    />
-                  </View>
-                )}
-              </View>
+              {globalUser.username !== userData.username && (
+                <View style={{ flexDirection: 'row', gap: buttonGap }}>
+                  <ModalActionButton
+                    title={connectButtonTitle}
+                    onPress={userData.isConnected ? null : userData.hasRequested ? handleUnsendRequest : handleConnect}
+                    disabled={connectButtonDisabled || loadingConnect}
+                  />
+                  <ModalActionButton
+                    title={userData.isBlocked ? "BLOCKED" : userData.isConnected ? "Disconnect" : "Block"}
+                    onPress={userData.isConnected ? handleDisconnect : handleBlock}
+                    danger={!userData.isConnected}
+                    variant={userData.isConnected ? "primary" : "primary"}
+                    disabled={loadingBlock || loadingDisconnect}
+                  />
+                </View>
+              )}
             </View>
           </TouchableWithoutFeedback>
         </View>
