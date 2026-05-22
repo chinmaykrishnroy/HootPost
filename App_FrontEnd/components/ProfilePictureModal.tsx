@@ -126,7 +126,7 @@ const ProfilePictureModal = ({ showButtons, isVisible, onClose, userName, onRefr
   const [pendingImage, setPendingImage] = useState(null);
   const [pendingCrop, setPendingCrop] = useState({ x: 0, y: 0, scale: 1 });
   const modalWidth = Math.min(width - 24, 420);
-  const mediaSize = modalWidth;
+  const mediaSize = modalWidth - 24;
   const cropSize = modalWidth - 24;
 
   useEffect(() => {
@@ -259,16 +259,16 @@ const ProfilePictureModal = ({ showButtons, isVisible, onClose, userName, onRefr
       <View className="flex-1 justify-center items-center bg-black/75 px-3">
         <TouchableOpacity className="absolute inset-0" activeOpacity={1} onPress={pendingImage ? undefined : onClose} />
         {pendingImage ? (
-          <View className="bg-[#111] rounded-xl border border-[#333] p-3" style={{ width: modalWidth }}>
-            <Text className="text-secondary-300 text-2xl font-spotifymixuititleextrabold mb-3">Profile Photo</Text>
+          <View className="bg-[#111] rounded-xl border border-[#333] p-4" style={{ width: modalWidth }}>
+            <Text className="text-secondary-300 text-2xl font-spotifymixuititleextrabold mb-3 px-1">Profile Photo</Text>
             <ProfileCropper
               image={pendingImage}
               size={cropSize}
               crop={pendingCrop}
               onCropChange={setPendingCrop}
             />
-            <Text className="text-gray-400 font-spotifymixui my-3">Pinch and drag to frame your profile photo.</Text>
-            <View className="flex-row gap-3">
+            <Text className="text-gray-400 font-spotifymixui my-3 px-1">Pinch and drag to frame your profile photo.</Text>
+            <View className="flex-row gap-3 px-1">
               <ModalActionButton
                 title="Cancel"
                 variant="secondary"
@@ -283,7 +283,7 @@ const ProfilePictureModal = ({ showButtons, isVisible, onClose, userName, onRefr
             </View>
           </View>
         ) : (
-          <View className="bg-black/80 rounded-3xl relative overflow-hidden" style={{ width: modalWidth }}>
+          <View className="bg-black/80 rounded-3xl relative overflow-hidden p-3" style={{ width: modalWidth }}>
             <TouchableOpacity onPress={onClose} style={{ position: 'absolute', right: 10, top: 10, zIndex: 1 }}>
               <Image source={icons.close} className="w-8 h-8" style={{ tintColor: "#ff0000" }} />
             </TouchableOpacity>
@@ -313,7 +313,7 @@ const ProfilePictureModal = ({ showButtons, isVisible, onClose, userName, onRefr
               )}
             </View>
             {showButtons && (
-              <View className="flex-row gap-3 px-3 py-3">
+              <View className="flex-row gap-3 pt-3">
                 <ModalActionButton
                   title="Upload"
                   disabled={isButtonLoading}

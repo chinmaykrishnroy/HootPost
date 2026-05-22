@@ -191,7 +191,7 @@ const User = () => {
     username: userData?.username,
     name: `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim(),
     profilePicture: userData?.profilePicture,
-    liked: false,
+    liked: !!post?.liked,
     likeCount: post?.likeCount || 0,
     updatedAt: post?.updatedAt || "",
   }), [userData?.firstName, userData?.lastName, userData?.profilePicture, userData?.username]);
@@ -364,9 +364,9 @@ const User = () => {
       onRequestClose={() => setPreviewPost(null)}
     >
       <TouchableWithoutFeedback onPress={() => setPreviewPost(null)}>
-        <View className="flex-1 justify-center bg-black/75 px-1">
+        <View className="flex-1 justify-center items-center bg-black/75 px-3">
           <TouchableWithoutFeedback onPress={() => {}}>
-            <View>
+            <View className="w-full items-center">
               {previewPost && (
                 <PostTile
                   post={postForTile(previewPost)}

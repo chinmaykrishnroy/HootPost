@@ -111,6 +111,7 @@ export const loadUserPostTiles = async (user) =>
         caption: post.caption || "",
         createdAt: post.createdAt,
         updatedAt: timeAgo(post.createdAt, post.updatedAt || post.createdAt),
+        liked: includesId(post.likedBy || [], user._id),
         likeCount: post.likeCount || post.likedBy?.length || 0,
         archived: !!post.archived,
         image: media[0]?.url || await signMediaUrl(post.imageKey || post.image, 120),

@@ -27,7 +27,7 @@ const UserModal = ({ userId, isVisible, onClose }) => {
   const [userData, setUserData] = useState(null);
   const { width } = Dimensions.get('window');
   const modalWidth = Math.min(width - 24, 420);
-  const mediaSize = modalWidth - 16;
+  const mediaSize = modalWidth - 24;
   const [loadingConnect, setLoadingConnect] = useState(false);
   const [loadingBlock, setLoadingBlock] = useState(false);
   const [loadingDisconnect, setLoadingDisconnect] = useState(false);
@@ -176,8 +176,8 @@ const UserModal = ({ userId, isVisible, onClose }) => {
       <TouchableWithoutFeedback onPress={onClose}>
         <View className="flex-1 justify-center items-center bg-black/60">
           <TouchableWithoutFeedback onPress={() => {}}>
-            <View className="p-2 bg-black2-200 rounded-3xl" style={{ width: modalWidth }}>
-              <View className="flex-row items-center mb-2">
+            <View className="p-3 bg-black2-200 rounded-3xl" style={{ width: modalWidth }}>
+              <View className="flex-row items-center mb-3">
                 <View className="w-8" />
                 <Text className="text-pink-100 font-spotifymixuititle text-4xl flex-1 text-center" numberOfLines={1}>
                   {userData.firstName} {userData.lastName}
@@ -191,7 +191,7 @@ const UserModal = ({ userId, isVisible, onClose }) => {
                 </TouchableOpacity>
               </View>
 
-              <View className="mb-2 overflow-hidden relative self-center" style={{ width: mediaSize, height: mediaSize }}>
+              <View className="mb-3 overflow-hidden relative self-center" style={{ width: mediaSize, height: mediaSize }}>
                 {isLoading && !hasError && (
                   <View className="absolute top-0 left-0 right-0 bottom-0 flex justify-center items-center">
                     <ActivityIndicator 
@@ -226,7 +226,7 @@ const UserModal = ({ userId, isVisible, onClose }) => {
                 )}
               </View>
 
-              <View className="flex-row justify-between mt-0 mx-1">
+              <View className="flex-row justify-between items-start px-1">
                 <Text
                   className={`${
                       userData.sex === "Male"
@@ -234,7 +234,8 @@ const UserModal = ({ userId, isVisible, onClose }) => {
                       : userData.sex === "Female"
                       ? "text-pink-500"
                       : "text-green-500"
-                  } font-spotifymixblack text-xl`}
+                  } font-spotifymixblack text-xl flex-1 pr-2`}
+                  numberOfLines={1}
                 >
                   @{userData.username}{" "}
                   {userData.sex === "Male"
@@ -243,18 +244,18 @@ const UserModal = ({ userId, isVisible, onClose }) => {
                   ? "(she/her)"
                   : "(they/them)"}
                 </Text>
-                <Text className="text-pink-200 font-spotifymixui text-xs pt-1.5">Joined on {formatDate(userData.joined)}</Text>
+                <Text className="text-pink-200 font-spotifymixui text-xs pt-1.5">Joined {formatDate(userData.joined)}</Text>
               </View>
               
-              <Text className="text-gray-300 font-spotifymixui text-lg text-center mb-2">{userData.bio}</Text>
+              <Text className="text-gray-300 font-spotifymixui text-lg text-center mt-2 mb-3 px-1">{userData.bio}</Text>
 
-              <View className="flex-row gap-3 my-1 mx-1">
+              <View className="flex-row gap-3 px-1 pb-1">
                 {globalUser.username !== userData.username && (
                   <View className="flex-row gap-3 flex-1">
                     <ModalActionButton
                       title={connectButtonTitle}
                       onPress={userData.isConnected ? null : userData.hasRequested ? handleUnsendRequest : handleConnect}
-                      disabled={connectButtonDisabled}
+                      disabled={connectButtonDisabled || loadingConnect}
                     />
                     <ModalActionButton
                       title={userData.isBlocked ? "BLOCKED" : userData.isConnected ? "Disconnect" : "Block"}

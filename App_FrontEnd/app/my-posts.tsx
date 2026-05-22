@@ -78,7 +78,7 @@ const MyPosts = () => {
     username: userData?.username,
     name: `${userData?.firstName || ''} ${userData?.lastName || ''}`.trim(),
     profilePicture: userData?.profilePicture,
-    liked: false,
+    liked: !!post?.liked,
     likeCount: post?.likeCount || 0,
     updatedAt: post?.updatedAt || '',
   }), [userData?.firstName, userData?.lastName, userData?.profilePicture, userData?.username]);
