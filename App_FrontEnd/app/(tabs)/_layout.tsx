@@ -1,4 +1,4 @@
-import { Text, View, Image, useColorScheme  } from "react-native";
+import { View, Image, useColorScheme  } from "react-native";
 import React, { useEffect } from "react";
 import { Tabs } from "expo-router";
 import { icons } from "../../constants";
@@ -7,23 +7,15 @@ import { HomeScreenOptions } from "./home";
 import { UserScreenOptions } from "./user";
 import { ChatScreenOptions } from "./chat";
 
-const TabIcon = ({ icon, color, name, focused }) => {
+const TabIcon = ({ icon, color }) => {
   return (
-    <View className="items-center justify-center gap-1">
+    <View className="items-center justify-center">
       <Image
         source={icon}
         resizeMode="contain"
         tintColor={color}
-        className="w-6 h-6"
+        className="w-7 h-7"
       />
-      <Text
-        className={`${
-          focused ? "font-spotifymixblack" : "font-spotifymixuititle"
-        } text-xs`}
-        style={{ color: color }}
-      >
-        {name}
-      </Text>
     </View>
   );
 };
@@ -42,7 +34,7 @@ const TabLayout = () => {
           backgroundColor: isDarkMode ? "#010101" : "#e6a7d1",
           borderTopColor: isDarkMode ? "#323532" : "#e2b39b",
           height: 56,
-          paddingTop: 14,
+          paddingTop: 8,
         },
       }}
     >
@@ -54,7 +46,6 @@ const TabLayout = () => {
             <TabIcon
               icon={icons.home}
               color={color}
-              name="Home"
               focused={focused}
             />
           ),
@@ -68,7 +59,6 @@ const TabLayout = () => {
             <TabIcon
               icon={icons.chat}
               color={color}
-              name="Chat"
               focused={focused}
             />
           ),
@@ -81,7 +71,6 @@ const TabLayout = () => {
             <TabIcon
               icon={icons.file}
               color={color}
-              name="Upload"
               focused={focused}
             />
           ),
@@ -91,11 +80,11 @@ const TabLayout = () => {
         name="user"
         options={({ navigation }) => ({
           ...UserScreenOptions({ navigation }),
+          unmountOnBlur: true,
           tabBarIcon: ({ color, focused }) => (
             <TabIcon
               icon={icons.user}
               color={color}
-              name="Me"
               focused={focused}
             />
           ),

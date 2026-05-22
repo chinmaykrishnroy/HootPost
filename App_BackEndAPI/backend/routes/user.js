@@ -4,7 +4,7 @@ import upload from '../middleware/upload.js';
 import { getCurrentUser } from '../middleware/getcurrentuser.js';
 import {seachUser, getAllUserSelf, uploadProfilePicture, deleteProfilePicture, getProfilePicture, sendRequest,
     acceptRequest, viewRequests, viewConnections, unsendRequest, deleteRequest, removeConnection, blockUser, getUserById,
-    unblockUser, viewBlockList, getAllAppUsers, getNotifications, getUserInfoWithPosts} from '../controllers/user.js';
+    unblockUser, viewBlockList, getAllAppUsers, getNotifications, getUserInfoWithPosts, markNotificationRead} from '../controllers/user.js';
 
 const router = express.Router({ mergeParams: true });
 
@@ -27,4 +27,5 @@ router.get('/all', [auth, getCurrentUser], getAllAppUsers);
 router.get('/:userId/load', [auth, getCurrentUser], getUserById);
 router.get('/:username/complete', [auth, getCurrentUser], getUserInfoWithPosts);
 router.get('/notifications', [auth, getCurrentUser], getNotifications);
+router.post('/notifications/:notificationId/read', [auth, getCurrentUser], markNotificationRead);
 export default router;

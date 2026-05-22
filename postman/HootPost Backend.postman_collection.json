@@ -1,0 +1,459 @@
+{
+  "info": {
+    "name": "HootPost Backend",
+    "description": "Backend-first HootPost API collection for local Docker Mongo/Redis/MinIO testing. Login saves `sessionToken` and `currentSessionId` collection variables automatically.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "sessionToken", "value": "" },
+    { "key": "currentSessionId", "value": "" },
+    { "key": "targetSessionId", "value": "" },
+    { "key": "adminKey", "value": "replace-with-a-long-admin-secret" },
+    { "key": "username", "value": "apurv" },
+    { "key": "targetUsername", "value": "friend" },
+    { "key": "postId", "value": "" },
+    { "key": "notificationId", "value": "" },
+    { "key": "messageId", "value": "" },
+    { "key": "chatId", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{sessionToken}}", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/health"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth + Sessions",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{username}}\",\n  \"email\": \"{{username}}@example.com\",\n  \"password\": \"Password123!\",\n  \"firstName\": \"Apurv\",\n  \"lastName\": \"Dev\",\n  \"age\": 24,\n  \"sex\": \"Male\",\n  \"bio\": \"Testing HootPost backend\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/register"
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.token) pm.collectionVariables.set('sessionToken', json.token);",
+                  "if (json.session && json.session.sessionId) pm.collectionVariables.set('currentSessionId', json.session.sessionId);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"{{username}}\",\n  \"password\": \"Password123!\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        },
+        {
+          "name": "Current Session",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/auth/current"
+          }
+        },
+        {
+          "name": "List Sessions",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/auth/sessions"
+          }
+        },
+        {
+          "name": "Revoke Target Session",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/auth/sessions/{{targetSessionId}}"
+          }
+        },
+        {
+          "name": "Revoke Other Sessions",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/auth/sessions"
+          }
+        },
+        {
+          "name": "Revoke All Sessions",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/auth/sessions-all"
+          }
+        },
+        {
+          "name": "Logout Current Session",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/logout"
+          }
+        },
+        {
+          "name": "Delete Account",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"Password123!\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/deleteUser"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Suggested Users",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/users/all"
+          }
+        },
+        {
+          "name": "Search User",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/users/search?usr={{targetUsername}}"
+          }
+        },
+        {
+          "name": "View Profile",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/users/{{targetUsername}}/complete"
+          }
+        },
+        {
+          "name": "Upload Profile Picture",
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "profilePicture", "type": "file", "src": "" }
+              ]
+            },
+            "url": "{{baseUrl}}/api/users/uploadProfilePicture"
+          }
+        },
+        {
+          "name": "Get Profile Picture URL",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/users/{{username}}/profilePicture"
+          }
+        },
+        {
+          "name": "Delete Profile Picture",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/users/deleteProfilePicture"
+          }
+        },
+        {
+          "name": "Send Connection Request",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/users/connect/{{targetUsername}}"
+          }
+        },
+        {
+          "name": "Accept Connection Request",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/users/accept-connection/{{targetUsername}}"
+          }
+        },
+        {
+          "name": "View Connection Requests",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/users/requests"
+          }
+        },
+        {
+          "name": "View Connections",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/users/connections"
+          }
+        },
+        {
+          "name": "Notifications",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/users/notifications"
+          }
+        },
+        {
+          "name": "Notifications Paginated",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/users/notifications?paginated=true&limit=20"
+          }
+        },
+        {
+          "name": "Mark Notification Read",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/users/notifications/{{notificationId}}/read"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Posts",
+      "item": [
+        {
+          "name": "Create Post",
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "image", "type": "file", "src": "" },
+                { "key": "caption", "value": "Hello from Postman", "type": "text" },
+                { "key": "sizeMode", "value": "11", "type": "text" }
+              ]
+            },
+            "url": "{{baseUrl}}/api/posts/create"
+          }
+        },
+        {
+          "name": "Feed",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/posts/alll"
+          }
+        },
+        {
+          "name": "Feed Paginated",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/posts/alll?paginated=true&limit=20"
+          }
+        },
+        {
+          "name": "My Posts",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/posts"
+          }
+        },
+        {
+          "name": "Like Post",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/posts/{{postId}}/like"
+          }
+        },
+        {
+          "name": "Unlike Post",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/posts/{{postId}}/unlike"
+          }
+        },
+        {
+          "name": "Edit Post",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"caption\": \"Updated caption\"\n}"
+            },
+            "url": "{{baseUrl}}/api/posts/edit/{{postId}}"
+          }
+        },
+        {
+          "name": "Download Post URL",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/posts/{{postId}}/download"
+          }
+        },
+        {
+          "name": "Delete Post",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/posts/delete/{{postId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Chat",
+      "item": [
+        {
+          "name": "List Conversations",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/chat/conversations"
+          }
+        },
+        {
+          "name": "Start Chat",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/chat/{{targetUsername}}/start"
+          }
+        },
+        {
+          "name": "Load Chat",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/chat/{{targetUsername}}/load?limit=30"
+          }
+        },
+        {
+          "name": "Send Text Message",
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "content", "value": "Hello from Postman", "type": "text" },
+                { "key": "private", "value": "false", "type": "text" }
+              ]
+            },
+            "url": "{{baseUrl}}/api/chat/{{targetUsername}}/send"
+          }
+        },
+        {
+          "name": "Send Attachment Message",
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "content", "value": "Attachment", "type": "text" },
+                { "key": "file", "type": "file", "src": "" }
+              ]
+            },
+            "url": "{{baseUrl}}/api/chat/{{targetUsername}}/send"
+          }
+        },
+        {
+          "name": "Messages",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/chat/{{targetUsername}}/messages?limit=50"
+          }
+        },
+        {
+          "name": "Recent Message",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/chat/{{targetUsername}}/recentMessage"
+          }
+        },
+        {
+          "name": "Search Messages",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/chat/{{targetUsername}}/searchMessages?query=hello"
+          }
+        },
+        {
+          "name": "Mark Chat Read",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/chat/conversations/{{chatId}}/read"
+          }
+        },
+        {
+          "name": "Edit Message",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"Edited message\"\n}"
+            },
+            "url": "{{baseUrl}}/api/chat/{{targetUsername}}/message/{{messageId}}"
+          }
+        },
+        {
+          "name": "Delete Message",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/chat/{{targetUsername}}/message/{{messageId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "auth": {
+        "type": "apikey",
+        "apikey": [
+          { "key": "key", "value": "x-admin-key", "type": "string" },
+          { "key": "value", "value": "{{adminKey}}", "type": "string" },
+          { "key": "in", "value": "header", "type": "string" }
+        ]
+      },
+      "item": [
+        {
+          "name": "List Users",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/admin/users"
+          }
+        },
+        {
+          "name": "Delete User By Username",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{targetUsername}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/admin/deleteuser"
+          }
+        },
+        {
+          "name": "Delete All Posts",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/admin/delete-posts-all"
+          }
+        }
+      ]
+    }
+  ]
+}

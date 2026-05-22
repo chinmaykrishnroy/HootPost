@@ -1,0 +1,6 @@
+node_modules
+npm-debug.log
+.env
+.git
+coverage
+backend/routes/temp.html

@@ -1,524 +1,410 @@
-import express from "express";
-import path from "path";
-import sharp from "sharp";
+import mongoose from "mongoose";
 import User from "../models/User.js";
-import { detectFileType, handleError } from "../utility/fileutils.js";
-import { uploadFileToS3, generateSignedUrl, deleteFileFromS3 } from '../utility/s3client.js';
+import asyncHandler from "../utils/asyncHandler.js";
+import { badRequest, forbidden, notFound } from "../utils/errors.js";
+import { escapeRegExp, normalizeUsername } from "../utils/sanitize.js";
+import { includesId, idsEqual } from "../utils/objectId.js";
+import { deleteMedia, processProfileImage, signMediaUrl, uploadImage } from "../services/mediaService.js";
+import {
+  createNotification,
+  emitNotification,
+  listNotifications,
+  markNotificationsRead,
+  serializeNotification,
+} from "../services/notificationService.js";
+import { assertVisibleUser, formatPublicUser, relationFlags } from "../services/userRelationService.js";
+import { loadUserPostTiles } from "../services/postService.js";
+import { parsePagination } from "../utils/pagination.js";
 
-const router = express.Router({ mergeParams: true });
+const userPublicSelect = "username email firstName lastName age sex bio profilePicture profilePictureThumb blockedUsers connections connectionRequests posts createdAt";
 
-export const seachUser = async (req, res) => {
-  const { usr } = req.query;
-  if (!usr) return res.status(400).send("Search term is required");
+const findUserByUsername = async (username) =>
+  User.findOne({ username: normalizeUsername(username) }).select(userPublicSelect);
 
-  const searchCriteria = {
+const requireUserByUsername = async (username) => {
+  const user = await findUserByUsername(username);
+  if (!user) throw notFound("User not found.");
+  return user;
+};
+
+const ensureVisible = (currentUser, targetUser) => {
+  if (!assertVisibleUser(currentUser, targetUser)) throw forbidden("Access denied.");
+};
+
+const profileUrlFor = (user, expiresIn = 300) =>
+  signMediaUrl(user?.profilePictureThumb || user?.profilePicture, expiresIn);
+
+const serializeUser = async (user, currentUser, options = {}) => {
+  const profilePicture = await profileUrlFor(user, options.expiresIn);
+  return formatPublicUser(user, currentUser, {
+    includePrivate: options.includePrivate,
+    profileUrl: profilePicture,
+  });
+};
+
+const visibleUsers = (users, currentUser) =>
+  users.filter((user) => !idsEqual(user._id, currentUser._id) && assertVisibleUser(currentUser, user));
+
+export const seachUser = asyncHandler(async (req, res) => {
+  const term = String(req.query.usr || "").trim();
+  if (!term) throw badRequest("Search term is required.");
+
+  const normalized = normalizeUsername(term);
+  const regex = new RegExp(escapeRegExp(term), "i");
+  const users = await User.find({
     $or: [
-      { username: usr },
-      { email: usr },
-      { firstName: { $regex: usr, $options: "i" } },
-      { lastName: { $regex: usr, $options: "i" } },
+      { username: normalized },
+      { email: normalized },
+      { firstName: regex },
+      { lastName: regex },
     ],
+  }).select(userPublicSelect);
+
+  const response = await Promise.all(
+    visibleUsers(users, req.currentUser).map((user) => serializeUser(user, req.currentUser))
+  );
+  if (response.length === 0) throw notFound("No users found.");
+  res.status(200).json(response);
+});
+
+export const getAllUserSelf = asyncHandler(async (req, res) => {
+  const users = await User.find().select(userPublicSelect);
+  const response = await Promise.all(
+    visibleUsers(users, req.currentUser).map((user) => serializeUser(user, req.currentUser))
+  );
+  res.status(200).json(response);
+});
+
+export const uploadProfilePicture = asyncHandler(async (req, res) => {
+  if (req.file) {
+    req.file.crop = {
+      x: req.body.crop?.x ?? req.body["crop[x]"],
+      y: req.body.crop?.y ?? req.body["crop[y]"],
+      scale: req.body.crop?.scale ?? req.body["crop[scale]"],
+      displaySize: req.body.crop?.displaySize ?? req.body["crop[displaySize]"],
+      sourceWidth: req.body.crop?.sourceWidth ?? req.body["crop[sourceWidth]"],
+      sourceHeight: req.body.crop?.sourceHeight ?? req.body["crop[sourceHeight]"],
+    };
+  }
+  const { large, small, thumbContentType, thumbExtension } = await processProfileImage(req.file);
+  const [profilePicture, profilePictureThumb] = await Promise.all([
+    uploadImage({
+      file: req.file,
+      buffer: large,
+      keyPrefix: "profiles",
+      ownerId: req.currentUser._id,
+    }),
+    uploadImage({
+      file: req.file,
+      buffer: small,
+      keyPrefix: "profiles/thumbs",
+      ownerId: req.currentUser._id,
+      contentType: thumbContentType,
+      extension: thumbExtension,
+    }),
+  ]);
+
+  await Promise.all([
+    deleteMedia(req.currentUser.profilePicture),
+    deleteMedia(req.currentUser.profilePictureThumb),
+  ]);
+
+  req.currentUser.profilePicture = profilePicture;
+  req.currentUser.profilePictureThumb = profilePictureThumb;
+  req.currentUser.profilePictureSmall = undefined;
+  await req.currentUser.save();
+  res.status(200).json({
+    success: "Profile picture updated successfully.",
+    profilePicture: await signMediaUrl(profilePicture, 300),
+    profilePictureThumb: await signMediaUrl(profilePictureThumb, 300),
+  });
+});
+
+export const deleteProfilePicture = asyncHandler(async (req, res) => {
+  await Promise.all([
+    deleteMedia(req.currentUser.profilePicture),
+    deleteMedia(req.currentUser.profilePictureThumb),
+  ]);
+  req.currentUser.profilePicture = undefined;
+  req.currentUser.profilePictureThumb = undefined;
+  req.currentUser.profilePictureSmall = undefined;
+  await req.currentUser.save();
+  res.status(200).json({ success: "Profile picture deleted successfully." });
+});
+
+export const getProfilePicture = asyncHandler(async (req, res) => {
+  const user = await requireUserByUsername(req.params.username);
+  ensureVisible(req.currentUser, user);
+  if (!user.profilePicture) return res.status(204).send();
+  res.status(200).json({ profilePicture: await signMediaUrl(user.profilePicture, 300) });
+});
+
+export const sendRequest = asyncHandler(async (req, res) => {
+  const targetUser = await requireUserByUsername(req.params.username);
+  if (idsEqual(targetUser._id, req.currentUser._id)) throw badRequest("You cannot connect with yourself.");
+  ensureVisible(req.currentUser, targetUser);
+  if (includesId(targetUser.connections, req.currentUser._id)) throw badRequest("Already connected.");
+  if (includesId(targetUser.connectionRequests, req.currentUser._id)) {
+    throw badRequest("Connection request already sent.");
+  }
+
+  targetUser.connectionRequests.addToSet(req.currentUser._id);
+  await targetUser.save();
+  const notification = await createNotification({
+    recipient: targetUser._id,
+    actor: req.currentUser._id,
+    type: "connection_request",
+    entityType: "User",
+    entityId: req.currentUser._id,
+    message: `${req.currentUser.username} sent you a connection request.`,
+  });
+  emitNotification(req.io, notification);
+  res.status(200).json({ success: "Connection request sent." });
+});
+
+export const acceptRequest = asyncHandler(async (req, res) => {
+  const requesterUser = await requireUserByUsername(req.params.username);
+  if (!includesId(req.currentUser.connectionRequests, requesterUser._id)) {
+    throw badRequest("No connection request from this user.");
+  }
+
+  req.currentUser.connectionRequests.pull(requesterUser._id);
+  req.currentUser.connections.addToSet(requesterUser._id);
+  requesterUser.connections.addToSet(req.currentUser._id);
+  requesterUser.connectionRequests.pull(req.currentUser._id);
+  await Promise.all([req.currentUser.save(), requesterUser.save()]);
+  await markNotificationsRead({
+    recipient: req.currentUser._id,
+    actor: requesterUser._id,
+    type: "connection_request",
+  });
+  const notification = await createNotification({
+    recipient: requesterUser._id,
+    actor: req.currentUser._id,
+    type: "connection_accepted",
+    entityType: "User",
+    entityId: req.currentUser._id,
+    message: `${req.currentUser.username} accepted your connection request.`,
+  });
+  emitNotification(req.io, notification);
+  res.status(200).json({ success: "Connection accepted." });
+});
+
+export const viewRequests = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.currentUser._id)
+    .populate("connectionRequests", "username firstName lastName profilePicture profilePictureThumb");
+  if (!user) throw notFound("User not found.");
+  const response = await Promise.all(user.connectionRequests.map((request) => serializeUser(request, req.currentUser)));
+  res.status(200).json(response);
+});
+
+export const viewConnections = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.currentUser._id)
+    .populate("connections", "username firstName lastName profilePicture profilePictureThumb");
+  if (!user) throw notFound("User not found.");
+  const response = await Promise.all(user.connections.map((connection) => serializeUser(connection, req.currentUser)));
+  res.status(200).json(response);
+});
+
+export const unsendRequest = asyncHandler(async (req, res) => {
+  const targetUser = await requireUserByUsername(req.params.username);
+  if (idsEqual(targetUser._id, req.currentUser._id)) throw badRequest("Bad request.");
+  if (!includesId(targetUser.connectionRequests, req.currentUser._id)) {
+    throw badRequest("No connection request to unsend.");
+  }
+
+  targetUser.connectionRequests.pull(req.currentUser._id);
+  await targetUser.save();
+  res.status(200).json({ success: "Connection request unsent." });
+});
+
+export const deleteRequest = asyncHandler(async (req, res) => {
+  const requesterUser = await requireUserByUsername(req.params.username);
+  if (idsEqual(requesterUser._id, req.currentUser._id)) throw badRequest("Bad request.");
+  if (!includesId(req.currentUser.connectionRequests, requesterUser._id)) {
+    throw badRequest("No connection request from this user.");
+  }
+
+  req.currentUser.connectionRequests.pull(requesterUser._id);
+  await req.currentUser.save();
+  await markNotificationsRead({
+    recipient: req.currentUser._id,
+    actor: requesterUser._id,
+    type: "connection_request",
+  });
+  res.status(200).json({ success: "Connection request deleted." });
+});
+
+export const removeConnection = asyncHandler(async (req, res) => {
+  const connectedUser = await requireUserByUsername(req.params.username);
+  if (!includesId(req.currentUser.connections, connectedUser._id)) {
+    throw badRequest("No connection exists with this user.");
+  }
+
+  req.currentUser.connections.pull(connectedUser._id);
+  connectedUser.connections.pull(req.currentUser._id);
+  await Promise.all([req.currentUser.save(), connectedUser.save()]);
+  res.status(200).json({ success: "Connection removed." });
+});
+
+export const blockUser = asyncHandler(async (req, res) => {
+  const userToBlock = await requireUserByUsername(req.params.username);
+  if (idsEqual(req.currentUser._id, userToBlock._id)) throw badRequest("You cannot block yourself.");
+  if (includesId(req.currentUser.blockedUsers, userToBlock._id)) throw badRequest("User already blocked.");
+
+  req.currentUser.blockedUsers.addToSet(userToBlock._id);
+  req.currentUser.connections.pull(userToBlock._id);
+  req.currentUser.connectionRequests.pull(userToBlock._id);
+  userToBlock.connections.pull(req.currentUser._id);
+  userToBlock.connectionRequests.pull(req.currentUser._id);
+  await Promise.all([req.currentUser.save(), userToBlock.save()]);
+  res.status(200).json({ success: "User blocked." });
+});
+
+export const unblockUser = asyncHandler(async (req, res) => {
+  const userToUnblock = await requireUserByUsername(req.params.username);
+  if (!includesId(req.currentUser.blockedUsers, userToUnblock._id)) {
+    throw badRequest("User is not blocked.");
+  }
+
+  req.currentUser.blockedUsers.pull(userToUnblock._id);
+  await req.currentUser.save();
+  res.status(200).json({ success: "User unblocked." });
+});
+
+export const viewBlockList = asyncHandler(async (req, res) => {
+  const blockedUsers = await User.find({ _id: { $in: req.currentUser.blockedUsers } })
+    .select("username email firstName lastName profilePicture profilePictureThumb");
+  const response = await Promise.all(blockedUsers.map((user) => serializeUser(user, req.currentUser)));
+  res.status(200).json(response);
+});
+
+export const getAllAppUsers = asyncHandler(async (req, res) => {
+  const currentUserId = req.currentUser._id;
+  const users = await User.find({ _id: { $ne: currentUserId } })
+    .select("firstName profilePicture profilePictureThumb blockedUsers connections");
+
+  const accessibleUsers = visibleUsers(users, req.currentUser);
+  const connectedUsers = accessibleUsers.filter((user) => includesId(req.currentUser.connections, user._id));
+  const otherUsers = accessibleUsers.filter((user) => !includesId(req.currentUser.connections, user._id));
+  const toCard = async (user, who) => ({
+    _id: user._id,
+    firstName: user.firstName,
+    profilePicture: await profileUrlFor(user, 120),
+    who,
+  });
+
+  const connectedCards = await Promise.all(connectedUsers.map((user) => toCard(user, "c")));
+  const otherCards = await Promise.all(otherUsers.map((user) => toCard(user, "n")));
+
+  res.status(200).json([
+    {
+      _id: currentUserId,
+      firstName: "YOU",
+      profilePicture: await profileUrlFor(req.currentUser, 120),
+      who: "u",
+    },
+    ...connectedCards,
+    ...otherCards,
+  ]);
+});
+
+export const getUserById = asyncHandler(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.userId)) throw badRequest("Invalid user id.");
+  const user = await User.findById(req.params.userId).select(userPublicSelect);
+  if (!user) throw notFound("User not found.");
+  ensureVisible(req.currentUser, user);
+
+  const flags = relationFlags(req.currentUser, user);
+  const baseUser = await serializeUser(user, req.currentUser);
+  res.status(200).json({
+    ...baseUser,
+    sex: user.sex,
+    bio: user.bio,
+    joined: user.createdAt,
+    profilePicture: await signMediaUrl(user.profilePicture, 300),
+    isConnected: flags.isConnected,
+    isBlocked: flags.hasBlockedCurrentUser,
+    hasRequested: flags.hasRequested,
+  });
+});
+
+export const getNotifications = asyncHandler(async (req, res) => {
+  const pagination = parsePagination(req.query);
+  const user = await User.findById(req.currentUser._id)
+    .populate("connectionRequests", "username firstName lastName profilePicture profilePictureThumb");
+  if (!user) throw notFound("User not found.");
+
+  const connectionRequestNotifications = await Promise.all(user.connectionRequests.map(async (request) => ({
+    _id: request._id,
+    username: request.username,
+    firstName: request.firstName,
+    profilePicture: await profileUrlFor(request, 120),
+    type: "connection request",
+  })));
+
+  const persisted = await listNotifications({
+    recipient: req.currentUser._id,
+    before: pagination.before,
+    limit: pagination.limit,
+  });
+  const pendingRequestActors = new Set(user.connectionRequests.map((request) => request._id.toString()));
+  const persistedItems = persisted.items
+    .filter((notification) =>
+      notification.type !== "connection_request" ||
+      pendingRequestActors.has(notification.actor?._id?.toString?.())
+    )
+    .map(serializeNotification);
+
+  const seen = new Set();
+  const merged = [...connectionRequestNotifications, ...persistedItems].filter((notification) => {
+    const key = `${notification.type}:${notification._id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  res.status(200).json(pagination.paginated ? { ...persisted, items: merged } : merged);
+});
+
+export const markNotificationRead = asyncHandler(async (req, res) => {
+  await markNotificationsRead({
+    _id: req.params.notificationId,
+    recipient: req.currentUser._id,
+  });
+  res.status(200).json({ success: "Notification marked as read." });
+});
+
+export const getUserInfoWithPosts = asyncHandler(async (req, res) => {
+  const user = await User.findOne({ username: normalizeUsername(req.params.username) })
+    .select(userPublicSelect)
+    .populate("posts", "image imageKey media caption likedBy archived createdAt updatedAt");
+  if (!user) throw notFound("User not found.");
+  ensureVisible(req.currentUser, user);
+
+  const flags = relationFlags(req.currentUser, user);
+  const visiblePosts = (user.posts || []).filter((post) => !post.archived);
+  const response = {
+    _id: user._id,
+    username: user.username,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    bio: user.bio,
+    createdAt: user.createdAt,
+    profilePicture: await signMediaUrl(user.profilePicture, 300),
+    connectionsCount: user.connections?.length || 0,
+    connectionRequestsCount: user.connectionRequests?.length || 0,
+    postsCount: visiblePosts.length,
+    totalLikesCount: visiblePosts.reduce((total, post) => total + (post.likedBy?.length || 0), 0),
+    moreAccessible: flags.isSelf || flags.isConnected,
   };
 
-  try {
-    const users = await User.find(searchCriteria).select("-password");
-
-    const currentUserBlockedUsers = req.currentUser.blockedUsers || [];
-
-    const accessibleUsers = users.filter((user) => {
-      const userBlockedUsers = user.blockedUsers || [];
-
-      const isBlockedByCurrentUser = currentUserBlockedUsers.includes(user._id);
-      const hasBlockedCurrentUser = userBlockedUsers.includes(
-        req.currentUser._id
-      );
-
-      return !isBlockedByCurrentUser && !hasBlockedCurrentUser;
-    });
-
-    if (accessibleUsers.length === 0)
-      return res.status(404).send("No users found");
-    res.json(accessibleUsers);
-  } catch (err) {
-    handleError(res, err);
+  if (flags.isSelf || flags.isConnected) {
+    response.age = user.age || null;
+    response.email = user.email;
+    response.gender = user.sex;
+    response.posts = await loadUserPostTiles(user);
   }
-};
-export const getAllUserSelf = async (req, res) => {
-  try {
-    const users = await User.find().select(
-      "username email firstName lastName age sex bio"
-    );
 
-    const currentUserBlockedUsers = req.currentUser.blockedUsers || [];
-    const accessibleUsers = users.filter((user) => {
-      const userBlockedUsers = user.blockedUsers || [];
-      const isBlockedByCurrentUser = currentUserBlockedUsers.includes(user._id);
-      const hasBlockedCurrentUser = userBlockedUsers.includes(
-        req.currentUser._id
-      );
-
-      return !isBlockedByCurrentUser && !hasBlockedCurrentUser;
-    });
-
-    res.json(accessibleUsers);
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const uploadProfilePicture2 = async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).send("No file uploaded");
-    const allowedExtensions = /jpeg|jpg|png|gif/;
-    const extname = allowedExtensions.test(path.extname(req.file.originalname).toLowerCase());
-    const mimetype = allowedExtensions.test(req.file.mimetype);
-    if (!extname || !mimetype) return res.status(400).send("Only image files are allowed!");
-    let compressedImage;
-    if (req.file.mimetype === 'image/gif') {
-      compressedImage = req.file.buffer;
-    } else {
-      compressedImage = await sharp(req.file.buffer)
-        .resize({ width: 1080, height: 1080, fit: sharp.fit.cover })
-        .toFormat(mimetype === 'image/png' ? 'png' : 'jpeg', { quality: 95 })
-        .toBuffer();
-    }
-    const smallProfilePicture = await sharp(req.file.buffer)
-      .resize(200, 200)
-      .toFormat(mimetype === 'image/png' ? 'png' : 'jpeg', { quality: 95 })
-      .toBuffer();
-    req.currentUser.profilePicture = compressedImage;
-    req.currentUser.profilePictureSmall = smallProfilePicture;
-    await req.currentUser.save();
-    res.status(200).send("Profile picture updated successfully");
-  } catch (err) {
-    res.status(500).send("Error updating profile picture");
-  }
-};
-export const deleteProfilePicture = async (req, res) => {
-  try {
-    if (!req.currentUser.profilePicture)
-    return res.status(204).send("No profile picture to delete");
-    const oldFileName = req.currentUser.profilePicture.split('/').pop().split('?')[0];
-    await deleteFileFromS3(oldFileName);
-    req.currentUser.profilePicture = undefined;
-    req.currentUser.profilePictureSmall = undefined;
-    await req.currentUser.save();
-    res.status(200).send("Profile picture deleted successfully");
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const getProfilePicture2 = async (req, res) => {
-  try {
-    const user = await User.findOne({ username: req.params.username }).select(
-      "profilePicture blockedUsers"
-    );
-    if (
-      req.currentUser.blockedUsers.includes(user._id) ||
-      user.blockedUsers.includes(req.currentUser._id)
-    ) {
-      return res.status(403).send("Access denied");
-    }
-    if (!user || !user.profilePicture)
-      return res.status(404).send("Profile picture not found");
-    const mimeType = await detectFileType(user.profilePicture);
-    res.set("Content-Type", mimeType);
-    res.send(user.profilePicture);
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const sendRequest = async (req, res) => {
-  try {
-    const targetUser = await User.findOne({ username: req.params.username });
-    if (!targetUser) return res.status(404).send("User not found");
-    if (targetUser._id.equals(req.currentUser._id))
-      return res.status(400).send("You cannot connect with yourself");
-    if (
-      req.currentUser.blockedUsers.includes(targetUser._id) ||
-      targetUser.blockedUsers.includes(req.currentUser._id)
-    ) {
-      return res.status(403).send("Cannot connect with this user");
-    }
-    if (targetUser.connections.includes(req.currentUser._id))
-      return res.status(400).send("Already connected");
-    if (targetUser.connectionRequests.includes(req.currentUser._id))
-      return res.status(400).send("Connection request already sent");
-    targetUser.connectionRequests.push(req.currentUser._id);
-    await targetUser.save();
-    res.status(200).send("Connection request sent");
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const acceptRequest = async (req, res) => {
-  try {
-    const requesterUser = await User.findOne({ username: req.params.username });
-    if (!requesterUser) return res.status(404).send("User not found");
-    if (!req.currentUser.connectionRequests.includes(requesterUser._id))
-      return res.status(400).send("No connection request from this user");
-    req.currentUser.connectionRequests.pull(requesterUser._id);
-    req.currentUser.connections.push(requesterUser._id);
-    requesterUser.connections.push(req.currentUser._id);
-    await req.currentUser.save();
-    await requesterUser.save();
-    res.send("Connection accepted");
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const viewRequests = async (req, res) => {
-  try {
-    const user = await User.findById(req.currentUser._id).populate(
-      "connectionRequests",
-      "username"
-    );
-    if (!user) return res.status(404).send("User not found");
-    res.status(200).json(user.connectionRequests);
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const viewConnections = async (req, res) => {
-  try {
-    const user = await User.findById(req.currentUser._id).populate(
-      "connections",
-      "username"
-    );
-    if (!user) return res.status(404).send("User not found");
-    res.status(200).json(user.connections);
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const unsendRequest = async (req, res) => {
-  try {
-    const targetUser = await User.findOne({ username: req.params.username });
-    if (!targetUser) return res.status(404).send("User not found");
-
-    if (targetUser._id.equals(req.currentUser._id))
-      return res.status(400).send("Bad Request");
-
-    if (!targetUser.connectionRequests.includes(req.currentUser._id))
-      return res.status(400).send("No connection request to unsend");
-
-    targetUser.connectionRequests.pull(req.currentUser._id);
-    await targetUser.save();
-
-    res.send("Connection request unsent");
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const deleteRequest = async (req, res) => {
-  try {
-    const requesterUser = await User.findOne({ username: req.params.username });
-    if (!requesterUser) return res.status(404).send("User not found");
-
-    if (requesterUser._id.equals(req.currentUser._id))
-      return res.status(400).send("Bad Request");
-
-    if (!req.currentUser.connectionRequests.includes(requesterUser._id))
-      return res.status(400).send("No connection request from this user");
-
-    req.currentUser.connectionRequests.pull(requesterUser._id);
-    await req.currentUser.save();
-
-    res.send("Connection request deleted");
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const removeConnection = async (req, res) => {
-  try {
-    const connectedUser = await User.findOne({ username: req.params.username });
-    if (!connectedUser) return res.status(404).send("User not found");
-
-    // Check if the users are connected
-    if (!req.currentUser.connections.includes(connectedUser._id))
-      return res.status(400).send("No connection exists with this user");
-
-    // Remove each other from connections list
-    req.currentUser.connections.pull(connectedUser._id);
-    connectedUser.connections.pull(req.currentUser._id);
-
-    await req.currentUser.save();
-    await connectedUser.save();
-
-    res.send("Connection removed");
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const blockUser = async (req, res) => {
-  try {
-    const userToBlock = await User.findOne({ username: req.params.username });
-    if (!userToBlock) return res.status(404).send("User not found");
-    if (req.currentUser._id.equals(userToBlock._id))
-      return res.status(400).send("You cannot block yourself");
-
-    if (!req.currentUser.blockedUsers.includes(userToBlock._id)) {
-      req.currentUser.blockedUsers.push(userToBlock._id);
-
-      req.currentUser.connections.pull(userToBlock._id);
-      req.currentUser.connectionRequests.pull(userToBlock._id);
-
-      await req.currentUser.save();
-      return res.status(200).send("User blocked");
-    }
-    return res.status(400).send("User already blocked");
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const unblockUser = async (req, res) => {
-  try {
-    const userToUnblock = await User.findOne({ username: req.params.username });
-    if (!userToUnblock) return res.status(404).send("User not found");
-    if (req.currentUser._id.equals(userToUnblock._id))
-      return res.status(400).send("It's you!");
-    if (req.currentUser.blockedUsers.includes(userToUnblock._id)) {
-      req.currentUser.blockedUsers.pull(userToUnblock._id);
-      await req.currentUser.save();
-      return res.status(200).send("User unblocked");
-    }
-    return res.status(400).send("User is not blocked");
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const viewBlockList = async (req, res) => {
-  try {
-    const blockedUsers = await User.find({
-      _id: { $in: req.currentUser.blockedUsers },
-    }).select("username email firstName lastName");
-
-    if (blockedUsers.length === 0) {
-      return res.status(404).send("No blocked users found");
-    }
-    res.status(200).json(blockedUsers);
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const getAllAppUsers = async (req, res) => {
-  try {
-    const currentUserId = req.currentUser._id;
-    const users = await User.find({ _id: { $ne: currentUserId } })
-      .select("firstName profilePicture _id blockedUsers connections");
-    const currentUserBlockedUsers = req.currentUser.blockedUsers || [];
-    const bufferToBase64 = (buffer) => buffer ? `data:image/jpeg;base64,${buffer.toString('base64')}` : null;
-    let currentUserProfilePicture = bufferToBase64(req.currentUser.profilePictureSmall);
-    if (!currentUserProfilePicture && req.currentUser.profilePicture) {
-      currentUserProfilePicture = bufferToBase64(req.currentUser.profilePicture);
-    }
-    const accessibleUsers = users.filter(user => {
-      const isBlockedByCurrentUser = currentUserBlockedUsers.includes(user._id);
-      const hasBlockedCurrentUser = (user.blockedUsers || []).includes(currentUserId);
-      return !isBlockedByCurrentUser && !hasBlockedCurrentUser;
-    });
-    const connectedUsers = accessibleUsers.filter(user => req.currentUser.connections.includes(user._id));
-    const otherUsers = accessibleUsers.filter(user => !req.currentUser.connections.includes(user._id));
-    const signedUrl = async (url) => {
-      if (!url) return null;
-      const fileName = url.split('/').pop();
-      const URL = await generateSignedUrl(fileName, 120);
-      return URL;
-    };
-    const formattedUsers = [
-      {
-        _id: currentUserId,
-        firstName: 'YOU',
-        profilePicture: currentUserProfilePicture,
-        who: 'u',
-      },
-      ...await Promise.all(connectedUsers.map(async (user) => ({
-        _id: user._id,
-        firstName: user.firstName,
-        profilePicture: await signedUrl(user.profilePicture),
-        who: 'c',
-      }))),
-      ...await Promise.all(otherUsers.map(async (user) => ({
-        _id: user._id,
-        firstName: user.firstName,
-        profilePicture: await signedUrl(user.profilePicture),
-        who: 'n',
-      })))
-    ];
-    res.json(formattedUsers);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-export const getUserById = async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const currentUserId = req.currentUser._id;
-    const user = await User.findById(userId).select("firstName lastName profilePicture username sex bio blockedUsers createdAt connections connectionRequests");
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-    const isBlockedByCurrentUser = req.currentUser.blockedUsers.includes(userId);
-    const hasBlockedCurrentUser = user.blockedUsers.includes(currentUserId);
-    if (isBlockedByCurrentUser || hasBlockedCurrentUser) {
-      return res.status(403).json({ message: "Access denied" });
-    }
-    const isConnected = user.connections.includes(currentUserId);
-    const hasRequested = user.connectionRequests.includes(currentUserId);
-    let profilePictureUrl = null;
-    if (user.profilePicture) {
-      const fileName = user.profilePicture.split('/').pop();
-      profilePictureUrl = await generateSignedUrl(fileName, 30);
-    }
-    res.json({
-      _id: user._id,
-      username: user.username,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      sex: user.sex,
-      bio: user.bio,
-      joined: user.createdAt,
-      profilePicture: profilePictureUrl,
-      isConnected: isConnected,
-      isBlocked: hasBlockedCurrentUser,
-      hasRequested: hasRequested,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-export const getNotifications = async (req, res) => {
-  try {
-    const user = await User.findById(req.currentUser._id).populate(
-      "connectionRequests",
-      "username"
-    );
-    if (!user) return res.status(404).send("User not found");
-
-    const notifications = user.connectionRequests.map((request) => ({
-      _id: request._id,
-      username: request.username,
-      type: "connection request",
-    }));
-
-    res.status(200).json(notifications);
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-
-export const uploadProfilePicture = async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).send("No file uploaded");
-    const allowedExtensions = /jpeg|jpg|png|gif/;
-    const extname = allowedExtensions.test(path.extname(req.file.originalname).toLowerCase());
-    const mimetype = allowedExtensions.test(req.file.mimetype);
-    if (!extname || !mimetype) return res.status(400).send("Only image files are allowed!");
-    let compressedImage;
-    if (req.file.mimetype === 'image/gif') {
-      compressedImage = req.file.buffer;
-    } else {
-      compressedImage = await sharp(req.file.buffer)
-        .resize({ width: 1080, height: 1080, fit: sharp.fit.cover })
-        .toFormat(req.file.mimetype === 'image/png' ? 'png' : 'jpeg', { quality: 35 })
-        .toBuffer();
-    }
-    if (req.currentUser.profilePicture) {
-      const oldFileName = req.currentUser.profilePicture.split('/').pop().split('?')[0];
-      await deleteFileFromS3(oldFileName);
-    }
-    const fileName = `${req.currentUser._id}-${Date.now()}.${req.file.mimetype.split('/')[1]}`;
-    const fileUrl = await uploadFileToS3(compressedImage, fileName, req.file.mimetype);
-    req.currentUser.profilePicture = fileUrl;
-    const smallProfilePicture = await sharp(req.file.buffer)
-      .resize(160, 160)
-      .toFormat(req.file.mimetype === 'image/png' ? 'png' : 'jpeg', { quality: 95 })
-      .toBuffer();
-    req.currentUser.profilePictureSmall = smallProfilePicture;
-    await req.currentUser.save();
-    res.status(200).send("Profile picture updated successfully");
-  } catch (err) {
-    console.error(err);
-    res.status(500).send("Error updating profile picture");
-  }
-};
-
-export const getProfilePicture = async (req, res) => {
-  try {
-    const user = await User.findOne({ username: req.params.username }).select("profilePicture profilePictureSmall blockedUsers");
-    if (!user) {
-      return res.status(404).send("User not found");
-    }
-    if (
-      req.currentUser.blockedUsers.includes(user._id) ||
-      user.blockedUsers.includes(req.currentUser._id)
-    ) {
-      return res.status(403).send("Access denied");
-    }
-    if (!user.profilePicture) {
-      return res.status(204).send("Profile picture does not exist");
-    }
-    const fileName = user.profilePicture.split('/').pop();
-    const signedUrl = await generateSignedUrl(fileName, 30);
-    res.status(200).json({ profilePicture: signedUrl });
-  } catch (err) {
-    console.error(err);
-    res.status(500).send("Error retrieving profile picture");
-  }
-};
-
-import { Types } from 'mongoose';
-
-export const getUserInfoWithPosts = async (req, res) => {
-  try {
-    const { username } = req.params;
-    const currentUserId = req.currentUser?._id; // Use optional chaining
-    const user = await User.findOne({ username })
-      .select("firstName lastName profilePicture username sex bio age email createdAt connections connectionRequests posts blockedUsers")
-      .populate("posts", "image likedBy");
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    const isBlockedByCurrentUser = req.currentUser?.blockedUsers?.includes(user._id) || false;
-    const hasBlockedCurrentUser = user.blockedUsers?.includes(currentUserId) || false;
-
-    if (isBlockedByCurrentUser || hasBlockedCurrentUser) {
-      return res.status(403).json({ message: "Access denied" });
-    }
-
-    const isConnected = user.connections?.includes(currentUserId) || false;
-
-    const responseData = {
-      _id: user._id,
-      username: user.username,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      bio: user.bio,
-      createdAt: user.createdAt,
-      profilePicture: user.profilePicture ? await generateSignedUrl(user.profilePicture.split('/').pop(), 30) : null,
-      connectionsCount: user.connections?.length || 0,
-      connectionRequestsCount: user.connectionRequests?.length || 0,
-      postsCount: user.posts?.length || 0,
-      totalLikesCount: user.posts?.reduce((acc, post) => acc + post.likedBy.length, 0) || 0,
-      moreAccessible: user._id.equals(currentUserId) || isConnected,
-    };
-
-    if (user._id.equals(currentUserId) || isConnected) {
-      responseData.age = user.age || null;
-      responseData.email = user.email;
-      responseData.gender = user.sex;
-      responseData.posts = await Promise.all(user.posts.map(async post => ({
-        postId: post._id,
-        image: await generateSignedUrl(post.image.split('/').pop(), 120),
-      })));
-    }
-
-    res.json(responseData);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-
-export default router;
+  res.status(200).json(response);
+});

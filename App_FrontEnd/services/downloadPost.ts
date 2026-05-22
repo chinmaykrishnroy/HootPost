@@ -3,9 +3,24 @@ import * as MediaLibrary from 'expo-media-library';
 import { Alert } from "react-native";
 import BASE_URL from '../config.js';
 
-export default downloadPostImage = async (postId: string | null) => {
+const blobToBase64 = (blob: Blob): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(String(reader.result));
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+};
+
+const getFileNameFromUrl = (url: string) => {
+  return url.split('/').pop()?.split('?')[0] || `hootpost-${Date.now()}.jpg`;
+};
+
+const downloadPostImage = async (postId: string | null) => {
   if (!postId) return;
+
   const downloadUrl = `${BASE_URL}/posts/${postId}/download`;
+
   try {
     const response = await fetch(downloadUrl, {
       method: 'GET',
@@ -15,32 +30,40 @@ export default downloadPostImage = async (postId: string | null) => {
     if (response.ok) {
       const data = await response.json();
       const imageUrl = data.image;
+
       if (!imageUrl) {
         throw new Error('Image URL is not available in the response');
       }
-      const fileName = imageUrl.split('/').pop().split('?')[0];
+
+      const fileName = getFileNameFromUrl(imageUrl);
       const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
       const imageResponse = await fetch(imageUrl);
+
       if (imageResponse.ok) {
         const imageBlob = await imageResponse.blob();
         const base64Data = await blobToBase64(imageBlob);
+
         await FileSystem.writeAsStringAsync(fileUri, base64Data.split(',')[1], {
           encoding: FileSystem.EncodingType.Base64,
         });
+
         const { status } = await MediaLibrary.requestPermissionsAsync();
+
         if (status !== 'granted') {
           Alert.alert('Permission Denied', 'Media library permissions are required to save images.');
           return;
         }
+
         const asset = await MediaLibrary.createAssetAsync(fileUri);
         const album = await MediaLibrary.getAlbumAsync('HootPost');
+
         if (album == null) {
           await MediaLibrary.createAlbumAsync('HootPost', asset, false);
         } else {
           await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
         }
+
         await FileSystem.deleteAsync(fileUri);
-        console.log(`Image saved at: ${fileUri}`);
       } else {
         const errorMessage = await imageResponse.text();
         console.error(`Error: ${imageResponse.status} - ${errorMessage}`);
@@ -53,15 +76,8 @@ export default downloadPostImage = async (postId: string | null) => {
     }
   } catch (error) {
     console.error(error);
-    Alert.alert('Error', error.message);
+    Alert.alert('Error', error instanceof Error ? error.message : 'Failed to download image');
   }
 };
 
-const blobToBase64 = (blob: Blob) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-};
+export default downloadPostImage;

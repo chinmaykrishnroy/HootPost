@@ -1,14 +1,18 @@
-import { Image, Text, View, Alert, TouchableOpacity, FlatList, Linking, RefreshControl } from "react-native";
-import React, { useState, useEffect } from "react";
-import CustomButton from "../../components/CustomButton";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Image, Text, View, Alert, TouchableOpacity, FlatList, Linking, RefreshControl, Modal, TouchableWithoutFeedback } from "react-native";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "expo-router";
-import { useRoute } from "@react-navigation/native"; 
+import { useFocusEffect, useIsFocused, useRoute } from "@react-navigation/native"; 
 import BASE_URL from '../../config.js';
 import { icons, images } from '@/constants';
 import { useGlobalContext } from "@/context/GlobalProvider";
 import EmptyPosts from '@/components/EmptyPosts';
 import LineEdit from "@/components/LineEdit";
 import ProfilePictureModal from "@/components/ProfilePictureModal";
+import CustomModal from "@/components/CustomModal";
+import PostTile from "@/components/PostTile";
+
+const SORT_POSTS_NEWEST_FIRST = true;
 
 const User = () => {
   const route = useRoute();
@@ -17,8 +21,15 @@ const User = () => {
   const { user, setUser } = useGlobalContext();
   const [userData, setUserData] = useState(null);
   const [isModalVisible, setModalVisible] = useState(false);
+  const [postAction, setPostAction] = useState(null);
+  const [deleteAction, setDeleteAction] = useState(null);
+  const [previewPost, setPreviewPost] = useState(null);
+  const [selectedPostIndex, setSelectedPostIndex] = useState(0);
+  const [actionLoading, setActionLoading] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const postsListRef = useRef(null);
   const router = useRouter();
+  const isFocused = useIsFocused();
 
   const handleLogout = async () => {
     setIsLoading(true);
@@ -79,30 +90,134 @@ const User = () => {
       fetchData();
     }
   }, [routeSearchText]);
+
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        setModalVisible(false);
+        setPostAction(null);
+        setDeleteAction(null);
+        setPreviewPost(null);
+      };
+    }, [])
+  );
   
   const handleRefresh = () => {
     setRefreshing(true);
     fetchData().finally(() => setRefreshing(false));
   };
 
-  const renderPost = ({ item }) => (
+  const isSelf = userData?.username === user?.username;
+  const userPosts = useMemo(() => {
+    const posts = [...(userData?.posts || [])];
+    if (!SORT_POSTS_NEWEST_FIRST) return posts;
+    return posts.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  }, [userData?.posts]);
+
+  const scrollToSelectedPost = useCallback(() => {
+    if (!userPosts.length) return;
+    const index = Math.max(0, Math.min(selectedPostIndex, userPosts.length - 1));
+    setTimeout(() => {
+      postsListRef.current?.scrollToIndex?.({ index, animated: true, viewPosition: 0.5 });
+    }, 80);
+  }, [selectedPostIndex, userPosts.length]);
+
+  const closeDeleteConfirm = useCallback(() => {
+    setDeleteAction(null);
+    setPostAction(null);
+    scrollToSelectedPost();
+  }, [scrollToSelectedPost]);
+
+  const archivePost = async (post) => {
+    if (!post) return;
+    setActionLoading("archive");
+    try {
+      const response = await fetch(`${BASE_URL}/posts/archive/${post.postId}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!response.ok) throw new Error("Could not archive this post.");
+      setPostAction(null);
+      setDeleteAction(null);
+      await fetchData();
+    } catch (error) {
+      Alert.alert("Archive failed", error.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const deletePost = async (post) => {
+    if (!post) return;
+    setActionLoading("delete");
+    try {
+      const response = await fetch(`${BASE_URL}/posts/delete/${post.postId}`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!response.ok) throw new Error("Could not delete this post.");
+      setPostAction(null);
+      setDeleteAction(null);
+      await fetchData();
+    } catch (error) {
+      Alert.alert("Delete failed", error.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const openEditPost = async (post) => {
+    if (!post) return;
+    await AsyncStorage.setItem("hootpost:edit-post", JSON.stringify(post));
+    setPostAction(null);
+    router.push("/edit-compose");
+  };
+
+  const openPostOptions = (item, index) => {
+    setSelectedPostIndex(index);
+    setPostAction(item);
+  };
+
+  const openDeleteConfirm = (post) => {
+    setSelectedPostIndex(userPosts.findIndex((item) => item.postId === post?.postId));
+    setDeleteAction(post);
+    setPostAction(null);
+  };
+
+  const postForTile = useCallback((post) => ({
+    ...post,
+    username: userData?.username,
+    name: `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim(),
+    profilePicture: userData?.profilePicture,
+    liked: false,
+    likeCount: post?.likeCount || 0,
+    updatedAt: post?.updatedAt || "",
+  }), [userData?.firstName, userData?.lastName, userData?.profilePicture, userData?.username]);
+
+  const renderPost = ({ item, index }) => (
     <View className="relative flex-1 m-1">
       <TouchableOpacity
       onPress={() => console.log("Post pressed")}
+      onLongPress={() => {
+        setSelectedPostIndex(index);
+        setPreviewPost(item);
+      }}
+      delayLongPress={260}
     >
       <Image
         source={{ uri: item.image }}
         className="w-full h-48 rounded-3xl"
       />
     </TouchableOpacity>
-      <TouchableOpacity
-        className="absolute right-1 top-1"
-        onPress={() => console.log("Link icon pressed")}
-      >
-        <View className="w-10 h-10">
-        <Image source={icons.dots} className="w-8 h-8 opacity-80 ml-4 mt-1" style={{ tintColor: "#454545" }}/>
-        </View>
-      </TouchableOpacity>
+      {isSelf && (
+        <TouchableOpacity className="absolute right-1 top-1" onPress={() => openPostOptions(item, index)}>
+          <View className="w-10 h-10">
+            <Image source={icons.dots} className="w-8 h-8 opacity-80 ml-4 mt-1" style={{ tintColor: "#454545" }}/>
+          </View>
+        </TouchableOpacity>
+      )}
     </View>
   );  
 
@@ -169,10 +284,10 @@ const User = () => {
           <Text className="text-white font-xl font-spotifymixuititle">Requests</Text>
         </TouchableOpacity>
       ) : (
-        <>
+        <View className="items-center">
           <Text className="text-white font-spotifymixui text-3xl">{userData?.connectionRequestsCount}</Text>
           <Text className="text-white font-xl font-spotifymixuititle">Requests</Text>
-        </>
+        </View>
       )}
     </View>
     
@@ -193,28 +308,36 @@ const User = () => {
           <Text className="text-white font-xl font-spotifymixuititle">Connections</Text>
         </TouchableOpacity>
       ) : (
-        <>
+        <View className="items-center">
           <Text className="text-white font-spotifymixui text-3xl">{userData?.connectionsCount}</Text>
           <Text className="text-white font-xl font-spotifymixuititle">Connections</Text>
-        </>
+        </View>
       )}
     </View>
   </View>
 
-    <View className="p-2 w-full h-[48px] bg-[#131313]">
+    <TouchableOpacity
+      activeOpacity={0.86}
+      onPress={() => router.push("/my-posts")}
+      className="p-2 w-full h-[48px] bg-[#131313]"
+    >
       <Text className="text-white text-2xl text-center font-spotifymixuititleextrabold">
         Posts
       </Text>
-    </View>
+    </TouchableOpacity>
     
     {userData?.moreAccessible ? (
       <FlatList
-        data={userData?.posts}
+        ref={postsListRef}
+        data={userPosts}
         keyExtractor={(item) => item.postId}
         renderItem={renderPost}
         numColumns={2}
         columnWrapperStyle={{ justifyContent: 'space-between' }}
         contentContainerStyle={{ paddingHorizontal: 4, paddingTop: 6, paddingBottom: 6}}
+        onScrollToIndexFailed={({ index }) => {
+          setTimeout(() => postsListRef.current?.scrollToIndex?.({ index, animated: true, viewPosition: 0.5 }), 180);
+        }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={["#f22fb1"]} progressBackgroundColor="black"/>}
         ListEmptyComponent={
           <View className="items-center justify-center mt-[50%]">
@@ -225,15 +348,59 @@ const User = () => {
     ) : (
       <EmptyPosts />
     )}
-    {isModalVisible && (
+    {isFocused && isModalVisible && (
       <ProfilePictureModal
         showButtons={(userData?.username === user?.username)}
         userName={userData?.username}
-        isVisible={isModalVisible}
+        isVisible={isFocused && isModalVisible}
         onClose={() => setModalVisible(false)}
         onRefresh={handleRefresh}
       />
     )}
+    <Modal
+      transparent
+      visible={isFocused && !!previewPost}
+      animationType="fade"
+      onRequestClose={() => setPreviewPost(null)}
+    >
+      <TouchableWithoutFeedback onPress={() => setPreviewPost(null)}>
+        <View className="flex-1 justify-center bg-black/75 px-1">
+          <TouchableWithoutFeedback onPress={() => {}}>
+            <View>
+              {previewPost && (
+                <PostTile
+                  post={postForTile(previewPost)}
+                  background="bg-[#050505]"
+                  title_color="text-secondary-300"
+                  border_color="border-[#777777]/5"
+                  showOptions={false}
+                />
+              )}
+            </View>
+          </TouchableWithoutFeedback>
+        </View>
+      </TouchableWithoutFeedback>
+    </Modal>
+    <CustomModal
+      title="Post options"
+      isVisible={isFocused && !!postAction}
+      onClose={() => setPostAction(null)}
+      buttons={[
+        { title: actionLoading === "archive" ? "Archiving" : "Archive", disabled: !!actionLoading, onPress: () => archivePost(postAction) },
+        { title: "Edit", onPress: () => openEditPost(postAction) },
+        { title: "Delete", disabled: !!actionLoading, onPress: () => openDeleteConfirm(postAction), danger: true },
+      ]}
+    />
+    <CustomModal
+      title="Delete post?"
+      isVisible={isFocused && !!deleteAction}
+      onClose={closeDeleteConfirm}
+      closeTitle="Cancel"
+      buttons={[
+        { title: actionLoading === "archive" ? "Archiving" : "Archive", disabled: !!actionLoading, onPress: () => archivePost(deleteAction) },
+        { title: actionLoading === "delete" ? "Deleting" : "Delete", disabled: !!actionLoading, onPress: () => deletePost(deleteAction), danger: true },
+      ]}
+    />
   </View>
   );
 };

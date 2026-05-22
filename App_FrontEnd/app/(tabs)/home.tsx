@@ -159,7 +159,7 @@ const Home: React.FC = () => {
   if (loadingPeople || loadingPosts) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }} className="bg-black2-200">
-        <ActivityIndicator size="undefined" color="#f22fb1" />
+        <ActivityIndicator size="large" color="#f22fb1" />
       </View>
     );
   }
@@ -206,16 +206,13 @@ const Home: React.FC = () => {
       </View>
 
       <CustomModal
+        title="Post options"
         isVisible={modalVisible}
         onClose={() => setModalVisible(false)}
         buttons={[
           { title: "Hide", onPress: () => hidePost() },
           { title: "Download", onPress: () => downloadPost(selectedPostId) },
         ]}
-        containerStyle={{
-          borderWidth: 2,
-          borderColor: "lightgray",
-        }}
       />
     </SafeAreaView>
   );
@@ -255,6 +252,7 @@ export const HomeScreenOptions = ({
           <Text className="text-secondary text-4xl font-spotifymixuititleextrabold">Hoot<Text className=" text-primary-200">Post</Text></Text>
         </View>
       ),
+    headerTitleAlign: 'left',
     headerStyle: {
       backgroundColor: "#050405",
     },

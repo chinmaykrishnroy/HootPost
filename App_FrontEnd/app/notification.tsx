@@ -130,7 +130,7 @@ const NotificationScreen = () => {
   if (loadingNotifications) {
     return (
       <View className="flex-1 justify-center items-center bg-background">
-        <ActivityIndicator size="undefined" color="#f33eb7" />
+        <ActivityIndicator size="large" color="#f33eb7" />
       </View>
     );
   }

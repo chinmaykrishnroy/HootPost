@@ -8,7 +8,8 @@ export const isConnected = async (req, res, next) => {
     if (req.currentUser._id.equals(targetUser._id)) {
         return res.status(200).send("It's you");
     }
-    if (!req.currentUser.connections.includes(targetUser._id)) {
+    const connected = req.currentUser.connections.some((id) => id.equals(targetUser._id));
+    if (!connected) {
         return res.status(403).send('You are not connected with this user');
     }
 

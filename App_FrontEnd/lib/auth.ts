@@ -1,4 +1,5 @@
 import BASE_URL from '../config.js';
+import { setSessionToken } from './apiClient';
 
 export const loginUser = async (
   identifier: string,
@@ -25,6 +26,9 @@ export const loginUser = async (
 
   const response = await Promise.race([fetchPromise, timeoutPromise]);
   const data = await response.json();
+  if (response.ok && data?.token) {
+    await setSessionToken(data.token);
+  }
 
   return { response, data };
 };

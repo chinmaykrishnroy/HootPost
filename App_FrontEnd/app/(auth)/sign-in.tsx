@@ -5,11 +5,9 @@ import { images } from "../../constants";
 import FormField from "../../components/FormField";
 import CustomButton from "../../components/CustomButton";
 import { Link, useRouter, useLocalSearchParams } from "expo-router";
-import io from "socket.io-client";
 import useNetworkStatus from "../../hooks/useNetworkStatus";
 import * as SystemUI from "expo-system-ui";
 import { loginUser } from "../../lib/auth";
-import BASE_URL from '../../config.js';
 import { useGlobalContext } from "../../context/GlobalProvider";
 
 SystemUI.setBackgroundColorAsync("#050505");
@@ -18,18 +16,11 @@ const SignIn = () => {
   const [form, setForm] = useState({ identifier: "", password: "" });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState({ identifier: "", password: "", other: "" });
-  const [socket, setSocket] = useState(null);
   const router = useRouter();
   const isConnected = useNetworkStatus();
   const { username, password } = useLocalSearchParams();
   const { setUser, setIsLoggedIn } = useGlobalContext();
   console.log("GlobalContext values:", { setUser, setIsLoggedIn });
-
-  useEffect(() => {
-    const newSocket = io(`${BASE_URL}`);
-    setSocket(newSocket);
-    return () => newSocket.close();
-  }, []);
 
   useEffect(() => {
     if (username) setForm((prevForm) => ({ ...prevForm, identifier: username }));
@@ -54,7 +45,6 @@ const SignIn = () => {
       );
 
       if (response.ok) {
-        socket.emit("user_logged_in", { username: form.identifier });
         setUser({ username: data.username, userId: data.userId });
         setIsLoggedIn(true);
         router.replace("/home");

@@ -1,413 +1,219 @@
-import { detectFileType, handleError } from "../utility/fileutils.js";
 import Chat from "../models/Chat.js";
+import Message from "../models/Message.js";
+import asyncHandler from "../utils/asyncHandler.js";
+import { badRequest, forbidden, notFound } from "../utils/errors.js";
+import { uploadAttachment } from "../services/mediaService.js";
+import {
+  emitChatEvent,
+  ensureDirectChat,
+  loadMessagesPage,
+  markMessagesDelivered,
+  markMessagesRead,
+  messageTypeFromMime,
+  participantKeyFor,
+  serializeMessage,
+  serializeMessages,
+} from "../services/chatService.js";
+import { parsePagination } from "../utils/pagination.js";
 
-export const startChat = async (req, res) => {
-  const currentUser = req.currentUser;
-
-  try {
-    let chat = await Chat.findOne({
-      participants: { $all: [currentUser._id, req.targetUser._id] },
-    });
-
-    if (chat) {
-      return res
-        .status(400)
-        .send("Chat already started. Load existing chat instead.");
-    }
-
-    chat = new Chat({
-      participants: [currentUser._id, req.targetUser._id],
-      messages: [], // Initialize with an empty messages array
-      chatDeleteAt: null, // Optional initial value, can be set later if needed
-    });
-
-    await chat.save();
-    res.status(201).json(chat);
-  } catch (err) {
-    res.status(500).send("Server error: " + err.message);
-  }
+const findDirectChat = async (currentUser, targetUser) => {
+  const chat = await Chat.findOne({
+    participantKey: participantKeyFor([currentUser._id, targetUser._id]),
+  });
+  if (!chat) throw notFound("Chat not found.");
+  return chat;
 };
-export const loadChat = async (req, res) => {
-  const currentUser = req.currentUser;
 
-  try {
-    const chat = await Chat.findOne({
-      participants: { $all: [currentUser._id, req.targetUser._id] },
-    }).populate("messages.sender", "username"); // Populate sender's username
-
-    // If chat does not exist
-    if (!chat) {
-      return res.status(404).send("Chat not found. Please start a new chat.");
-    }
-
-    res.json({
-      participants: chat.participants,
-      messages: chat.messages, // Load all messages in the chat
-      chatDeleteAt: chat.chatDeleteAt, // Optional, if needed
-      createdAt: chat.createdAt, // Optional, if needed
-      updatedAt: chat.updatedAt, // Optional, if needed
-    });
-  } catch (err) {
-    res.status(500).send("Server error: " + err.message);
-  }
+const unreadCountFor = (chat, userId) => {
+  const key = userId.toString();
+  if (chat.unreadCounts instanceof Map) return chat.unreadCounts.get(key) || 0;
+  return chat.unreadCounts?.[key] || 0;
 };
-export const deleteChat = async (req, res) => {
-  const currentUser = req.currentUser;
 
-  try {
-    const chat = await Chat.findOneAndDelete({
-      participants: { $all: [currentUser._id, req.targetUser._id] },
-    });
+export const listChats = asyncHandler(async (req, res) => {
+  const chats = await Chat.find({ participants: req.currentUser._id })
+    .sort({ lastMessageAt: -1, updatedAt: -1 })
+    .limit(Math.min(Number(req.query.limit) || 30, 100))
+    .populate("participants", "username firstName lastName profilePicture profilePictureThumb")
+    .populate("lastMessage")
+    .lean();
 
-    if (!chat) {
-      return res.status(404).send("Chat not found.");
+  const response = await Promise.all(chats.map(async (chat) => ({
+    ...chat,
+    lastMessage: chat.lastMessage ? await serializeMessage(chat.lastMessage) : null,
+    unreadCount: unreadCountFor(chat, req.currentUser._id),
+  })));
+
+  res.status(200).json({ chats: response });
+});
+
+export const startChat = asyncHandler(async (req, res) => {
+  const chat = await ensureDirectChat(req.currentUser, req.targetUser);
+  res.status(201).json(chat);
+});
+
+export const loadChat = asyncHandler(async (req, res) => {
+  const chat = await Chat.findOne({
+    participantKey: participantKeyFor([req.currentUser._id, req.targetUser._id]),
+  }).populate("participants", "username firstName lastName profilePicture profilePictureThumb");
+  if (!chat) throw notFound("Chat not found. Please start a new chat.");
+
+  const pagination = parsePagination(req.query);
+  const page = await loadMessagesPage({
+    chatId: chat._id,
+    before: pagination.before,
+    limit: pagination.limit,
+  });
+  await markMessagesDelivered({ chatId: chat._id, userId: req.currentUser._id });
+  emitChatEvent(req.io, chat, "chat:delivered", { chatId: chat._id, userId: req.currentUser._id });
+
+  res.status(200).json({
+    chat,
+    messages: await serializeMessages(page.items),
+    nextCursor: page.nextCursor,
+    hasMore: page.hasMore,
+  });
+});
+
+export const deleteChat = asyncHandler(async (req, res) => {
+  const chat = await findDirectChat(req.currentUser, req.targetUser);
+  chat.deletedAtByUser.set(req.currentUser._id.toString(), new Date());
+  await chat.save();
+  res.status(200).json({ success: "Chat hidden for current user." });
+});
+
+export const sendMessage = asyncHandler(async (req, res) => {
+  const content = String(req.body.content || "").trim();
+  const isPrivate = req.body.private === true || req.body.private === "true";
+  if (!content && !req.file) throw badRequest("Message content or file must be provided.");
+
+  const chat = await ensureDirectChat(req.currentUser, req.targetUser);
+  const attachment = req.file
+    ? await uploadAttachment({ file: req.file, keyPrefix: `chat/${chat._id}`, ownerId: req.currentUser._id })
+    : null;
+
+  const message = await Message.create({
+    chat: chat._id,
+    sender: req.currentUser._id,
+    type: attachment ? messageTypeFromMime(attachment.mime) : "text",
+    content,
+    fileKey: attachment?.key,
+    fileName: req.file?.originalname,
+    fileSize: req.file?.size,
+    fileType: attachment?.mime,
+    private: isPrivate,
+    seenBy: [req.currentUser._id],
+    deliveredTo: [req.currentUser._id],
+    expiresAt: isPrivate
+      ? new Date(Date.now() + (Number(req.body.expires) || 24 * 60) * 60 * 1000)
+      : null,
+  });
+
+  chat.lastMessage = message._id;
+  chat.lastMessageAt = message.createdAt;
+  for (const participantId of chat.participants) {
+    if (!participantId.equals(req.currentUser._id)) {
+      const key = participantId.toString();
+      chat.unreadCounts.set(key, (chat.unreadCounts.get(key) || 0) + 1);
     }
-
-    res.status(200).send("Chat deleted successfully.");
-  } catch (err) {
-    res.status(500).send("Server error: " + err.message);
   }
-};
-export const sendMessage = async (req, res) => {
-  const { username } = req.params;
-  const { content, private: isPrivate = false, expires } = req.body;
-  const currentUser = req.currentUser;
+  await chat.save();
 
-  try {
-    if (!content?.trim() && !req.file) {
-      return res.status(400).send("Message content or file must be provided.");
-    }
+  const hydrated = await Message.findById(message._id).populate("sender", "username").lean();
+  const serialized = await serializeMessage(hydrated);
+  emitChatEvent(req.io, chat, "message:new", { chatId: chat._id, message: serialized });
+  res.status(201).json(serialized);
+});
 
-    let chat = await Chat.findOne({
-      participants: { $all: [currentUser._id, req.targetUser._id] },
-    });
+export const getRecentMessage = asyncHandler(async (req, res) => {
+  const chat = await findDirectChat(req.currentUser, req.targetUser);
+  const message = await Message.findOne({ chat: chat._id, deletedAt: null })
+    .sort({ createdAt: -1 })
+    .populate("sender", "username")
+    .lean();
 
-    if (!chat) {
-      return res.status(404).send("Chat not found. Start a chat first.");
-    }
+  if (!message) throw notFound("No messages found in the chat.");
+  res.status(200).json(await serializeMessage(message));
+});
 
-    let fileBuffer = null;
-    let fileType = null;
+export const loadAllMessages = asyncHandler(async (req, res) => {
+  const chat = await findDirectChat(req.currentUser, req.targetUser);
+  const pagination = parsePagination(req.query, { defaultLimit: 50 });
+  const page = await loadMessagesPage({
+    chatId: chat._id,
+    before: pagination.before,
+    limit: pagination.limit,
+  });
+  await markMessagesDelivered({ chatId: chat._id, userId: req.currentUser._id });
+  emitChatEvent(req.io, chat, "chat:delivered", { chatId: chat._id, userId: req.currentUser._id });
+  const messages = await serializeMessages(page.items);
+  res.status(200).json(pagination.paginated ? { ...page, items: messages } : messages);
+});
 
-    if (req.file) {
-      fileBuffer = req.file.buffer;
+export const deleteMessage = asyncHandler(async (req, res) => {
+  const chat = await findDirectChat(req.currentUser, req.targetUser);
+  const message = await Message.findOne({ _id: req.params.messageId, chat: chat._id });
+  if (!message) throw notFound("Message not found.");
+  if (!message.sender.equals(req.currentUser._id)) throw forbidden("Only the sender can delete this message.");
 
-      try {
-        fileType = await detectFileType(fileBuffer);
-      } catch (error) {
-        return handleError(res, error);
-      }
-    }
+  message.deletedAt = new Date();
+  await message.save();
+  emitChatEvent(req.io, chat, "message:deleted", { chatId: chat._id, messageId: message._id });
+  res.status(200).json({ success: "Message deleted successfully." });
+});
 
-    const message = {
-      sender: currentUser._id,
-      content: content?.trim() || "",
-      file: fileBuffer,
-      fileType: fileType || "",
-      private: isPrivate,
-      seen: false,
-      createdAt: Date.now(),
-      expires: isPrivate
-        ? expires
-          ? new Date(Date.now() + expires * 1 * 60 * 1000) // Custom expiry in hours
-          : new Date(Date.now() + 1 * 24 * 60 * 60 * 1000) // Default 1 day expiry
-        : null,
-    };
+export const updateMessage = asyncHandler(async (req, res) => {
+  const content = String(req.body.content || "").trim();
+  if (!content) throw badRequest("Content cannot be empty.");
 
-    chat.messages.push(message);
+  const chat = await findDirectChat(req.currentUser, req.targetUser);
+  const message = await Message.findOne({ _id: req.params.messageId, chat: chat._id });
+  if (!message) throw notFound("Message not found.");
+  if (!message.sender.equals(req.currentUser._id)) throw forbidden("Only the sender can update this message.");
 
-    await chat.save();
+  message.content = content;
+  message.editedAt = new Date();
+  await message.save();
+  const serialized = await serializeMessage(message);
+  emitChatEvent(req.io, chat, "message:updated", { chatId: chat._id, message: serialized });
+  res.status(200).json(serialized);
+});
 
-    const sentMessage = chat.messages[chat.messages.length - 1];
-    res.status(201).json(sentMessage);
-  } catch (err) {
-    res.status(500).send("Server error: " + err.message);
-  }
-};
-export const getRecentMessage = async (req, res) => {
-  const { username } = req.params;
-  const currentUser = req.currentUser;
+export const clearAllMessages = asyncHandler(async (req, res) => {
+  const chat = await findDirectChat(req.currentUser, req.targetUser);
+  await Message.updateMany({ chat: chat._id }, { $set: { deletedAt: new Date() } });
+  chat.unreadCounts = new Map();
+  await chat.save();
+  emitChatEvent(req.io, chat, "chat:cleared", { chatId: chat._id });
+  res.status(200).json({ success: "All messages cleared." });
+});
 
-  try {
-    let chat = await Chat.findOne({
-      participants: { $all: [currentUser._id, req.targetUser._id] },
-    });
+export const searchMessage = asyncHandler(async (req, res) => {
+  const query = String(req.query.query || "").trim();
+  if (!query) throw badRequest("Search query cannot be empty.");
 
-    if (!chat || chat.messages.length === 0) {
-      return res.status(404).send("No messages found in the chat.");
-    }
+  const chat = await findDirectChat(req.currentUser, req.targetUser);
+  const messages = await Message.find({
+    chat: chat._id,
+    deletedAt: null,
+    $text: { $search: query },
+  })
+    .sort({ score: { $meta: "textScore" } })
+    .limit(50)
+    .populate("sender", "username")
+    .lean();
 
-    const recentMessage = chat.messages[chat.messages.length - 1];
+  res.status(200).json(await serializeMessages(messages));
+});
 
-    res.status(200).json(recentMessage);
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const loadAllMessages = async (req, res) => {
-  const { username, messageId } = req.params;
-  const currentUser = req.currentUser;
+export const markChatRead = asyncHandler(async (req, res) => {
+  const chat = await Chat.findOne({ _id: req.params.chatId, participants: req.currentUser._id });
+  if (!chat) throw notFound("Chat not found.");
 
-  try {
-    const chat = await Chat.findOne({
-      participants: { $all: [currentUser._id, req.targetUser._id] },
-    })
-      .select("messages")
-      .populate("messages.sender", "username");
+  chat.unreadCounts.set(req.currentUser._id.toString(), 0);
+  await chat.save();
+  await markMessagesRead({ chatId: chat._id, userId: req.currentUser._id });
 
-    if (!chat) {
-      return res.status(404).send("Chat not found.");
-    }
-    res.status(200).json(chat.messages);
-  } catch (err) {
-    res.status(500).send("Server error: " + err.message);
-  }
-};
-export const deleteMessage = async (req, res) => {
-  const { username, messageId } = req.params;
-  const currentUser = req.currentUser;
-
-  try {
-    let chat = await Chat.findOne({
-      participants: { $all: [currentUser._id, req.targetUser._id] },
-    });
-
-    if (!chat) {
-      return res.status(404).send("Chat not found.");
-    }
-
-    const messageIndex = chat.messages.findIndex(
-      (msg) => msg._id.toString() === messageId
-    );
-    if (messageIndex === -1) {
-      return res.status(404).send("Message 1 not found.");
-    }
-
-    chat.messages.splice(messageIndex, 1);
-    await chat.save();
-
-    res.status(200).send("Message deleted successfully.");
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const updateMessage = async (req, res) => {
-  const { username, messageId } = req.params;
-  const currentUser = req.currentUser;
-  const { content, file } = req.body;
-
-  try {
-    let chat = await Chat.findOne({
-      participants: { $all: [currentUser._id, req.targetUser._id] },
-    });
-
-    if (!chat) {
-      return res.status(404).send("Chat not found.");
-    }
-
-    const message = chat.messages.id(messageId);
-    if (!message) {
-      return res.status(404).send("Message 2 not found.");
-    }
-
-    if (content) {
-      message.content = content.trim();
-    }
-
-    if (file) {
-      message.file = file;
-      message.fileType = await detectFileType(file);
-    }
-
-    await chat.save();
-
-    res.status(200).json(message);
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const clearAllMessages = async (req, res) => {
-  const { username } = req.params;
-  const currentUser = req.currentUser;
-
-  try {
-    let chat = await Chat.findOne({
-      participants: { $all: [currentUser._id, req.targetUser._id] },
-    });
-
-    if (!chat) {
-      return res.status(404).send("Chat not found.");
-    }
-
-    chat.messages = [];
-    await chat.save();
-
-    res.status(200).send("All messages cleared.");
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const searchMessage = async (req, res) => {
-  const { username } = req.params;
-  const currentUser = req.currentUser;
-  const { query } = req.query;
-
-  if (!query || query.trim() === "") {
-    return res.status(400).send("Search query cannot be empty.");
-  }
-
-  const searchTerms = query.trim().split(/\s+/); // Split the query into individual search terms
-
-  try {
-    // Find chat based on participants
-    let chat = await Chat.findOne({
-      participants: { $all: [currentUser._id, req.targetUser._id] },
-    });
-
-    if (!chat) {
-      return res.status(404).send("Chat not found."); // If no chat found
-    }
-
-    const matchingMessages = chat.messages.filter((message) => {
-      if (!message.content) return false; // Skip messages with no content
-      const messageWords = message.content.trim().split(/\s+/); // Split message content by spaces
-      // Check if any search term matches any word in the message content
-      return searchTerms.some((term) => messageWords.includes(term));
-    });
-
-    const sortedMessages = matchingMessages.sort((a, b) => {
-      const aMatchCount = searchTerms.filter((term) =>
-        a.content.trim().split(/\s+/).includes(term)
-      ).length;
-      const bMatchCount = searchTerms.filter((term) =>
-        b.content.trim().split(/\s+/).includes(term)
-      ).length;
-      return bMatchCount - aMatchCount;
-    });
-
-    const resultMessages = sortedMessages.map(({ file, ...rest }) => rest);
-    res.json(resultMessages);
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-export const loadHTMLmessages = async (req, res) => {
-  const { username } = req.params;
-  const currentUser = req.currentUser;
-
-  try {
-    // Find the chat based on participants
-    const chat = await Chat.findOne({
-      participants: { $all: [currentUser._id, req.targetUser._id] },
-    }).populate("messages.sender", "username");
-
-    if (!chat) {
-      return res.status(404).send("Chat not found.");
-    }
-
-    let html = `
-            <style>
-                .chat-container {
-                    display: flex;
-                    flex-direction: column;
-                    padding: 10px;
-                    max-width: 500px; /* Set a max width for chat container */
-                    font-family: Arial, sans-serif; /* Set a font family */
-                }
-                .message {
-                    margin: 5px 0;
-                    padding: 10px;
-                    border-radius: 10px;
-                    position: relative; /* For positioning the message */
-                    max-width: 70%; /* Set a max width for messages */
-                }
-                .message.left {
-                    background-color: #f1f1f1; /* Light background for others */
-                    align-self: flex-start; /* Align to left */
-                }
-                .message.right {
-                    background-color: #007bff; /* Blue background for current user */
-                    color: white;
-                    align-self: flex-end; /* Align to right */
-                }
-                .message-header {
-                    display: flex;
-                    justify-content: space-between; /* Space between username and timestamp */
-                }
-                .username {
-                    font-weight: bold;
-                }
-                .timestamp {
-                    font-size: 0.7em;
-                    color: #000; /* Gray color for timestamp */
-                }
-                .file {
-                    margin-top: 5px;
-                    border: 1px solid #ccc; /* Border for file preview */
-                    border-radius: 5px;
-                    overflow: hidden; /* Hide overflow for rounded corners */
-                }
-                .file img {
-                    max-width: 100%; /* Scale image to fit */
-                    border-radius: 5px; /* Rounded corners */
-                }
-                .file video, .file audio {
-                    width: 100%; /* Full width for video/audio */
-                    border-radius: 5px; /* Rounded corners */
-                }
-            </style>
-            <div class="chat-container">
-        `;
-
-    chat.messages.forEach((message) => {
-      const { content, sender, createdAt, file, fileType } = message;
-      const senderUsername = sender ? sender.username : "Unknown User";
-
-      // Determine alignment based on the sender
-      const messageAlignment = sender._id.equals(currentUser._id)
-        ? "right"
-        : "left";
-
-      // Append each message to the HTML
-      html += `
-                <div class="message ${messageAlignment}">
-                    <div class="message-header">
-                        <span class="username">${senderUsername}</span>
-                        <span class="timestamp">${new Date(
-                          createdAt
-                        ).toLocaleTimeString()}</span>
-                    </div>
-                    <div class="message-content">${content}</div>
-            `;
-
-      // Handle file attachments
-      if (file) {
-        html += `<div class="file">`;
-        if (fileType.startsWith("image/")) {
-          html += `<img src="data:${fileType};base64,${file.toString(
-            "base64"
-          )}" alt="Image message"/>`;
-        } else if (fileType.startsWith("video/")) {
-          html += `<video controls><source src="data:${fileType};base64,${file.toString(
-            "base64"
-          )}" type="${fileType}">Your browser does not support the video tag.</video>`;
-        } else if (fileType.startsWith("audio/")) {
-          html += `<audio controls>
-                                <source src="data:${fileType};base64,${file.toString(
-            "base64"
-          )}" type="${fileType}">
-                                Your browser does not support the audio tag.
-                            </audio>`;
-        }
-        html += `</div>`; // Close file div
-      }
-
-      html += `</div>`; // Close message div
-    });
-
-    html += "</div>"; // Close chat container
-    res.status(200).send(html); // Send the constructed HTML
-  } catch (err) {
-    res.status(500).send("Server error: " + err.message);
-  }
-};
+  emitChatEvent(req.io, chat, "chat:read", { chatId: chat._id, userId: req.currentUser._id });
+  res.status(200).json({ success: "Chat marked as read." });
+});

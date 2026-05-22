@@ -1,12 +1,17 @@
 import mongoose from 'mongoose';
-import messageSchema from './Message.js';
 
-// Chat Schema
 const chatSchema = new mongoose.Schema({
   participants: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }],
-  messages: [messageSchema],
-  chatDeleteAt: { type: Date }
+  participantKey: { type: String, required: true, unique: true },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  lastMessage: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
+  lastMessageAt: { type: Date },
+  unreadCounts: { type: Map, of: Number, default: {} },
+  mutedUntil: { type: Map, of: Date, default: {} },
+  deletedAtByUser: { type: Map, of: Date, default: {} },
 }, { timestamps: true });
 
-// Create the Chat model from the chatSchema
+chatSchema.index({ participants: 1 });
+chatSchema.index({ lastMessageAt: -1 });
+
 export default mongoose.model('Chat', chatSchema);

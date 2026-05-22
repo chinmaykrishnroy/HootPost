@@ -8,8 +8,10 @@ import GlobalProvider from "@/context/GlobalProvider";
 import { GestureHandlerRootView } from 'react-native-gesture-handler'; 
 import NotificationScreen, { NotificationScreenOptions } from "./notification";
 import { MoreUserOptionOptions } from "./moreuseroptions";
+import { installAuthenticatedFetch } from "@/lib/apiClient";
 
 SplashScreen.preventAutoHideAsync();
+installAuthenticatedFetch();
 
 const RootLayout = () => {
   const scheme = useColorScheme();
@@ -53,6 +55,18 @@ const RootLayout = () => {
         <Stack.Screen
           name="moreuseroptions"
           options={MoreUserOptionOptions}
+        />
+        <Stack.Screen
+          name="upload-compose"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="edit-compose"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="my-posts"
+          options={{ headerShown: false }}
         />
       </Stack>
     </GlobalProvider>

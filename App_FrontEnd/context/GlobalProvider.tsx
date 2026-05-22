@@ -2,7 +2,8 @@ import { getCurrentUser } from "@/lib/auth";
 import { createContext, useContext, useState, useEffect } from "react";
 import { useRouter } from 'expo-router'; 
 import { io } from 'socket.io-client';
-import BASE_URL from '../config.js';
+import { SOCKET_URL } from '../config.js';
+import { getSessionToken } from "@/lib/apiClient";
 
 interface User {
   userId: string;
@@ -11,16 +12,16 @@ interface User {
 
 interface GlobalContextType {
   isLoggedIn: boolean;
-  setIsLoggedIn: (loggedIn: boolean) => void; // Add this type
+  setIsLoggedIn: (loggedIn: boolean) => void;
   setIsLoading: (loading: boolean) => void;
   user: User | null;
-  setUser: (user: string | null) => void;
+  setUser: (user: User | null) => void;
   isLoading: boolean;
 }
 
 const defaultContextValue: GlobalContextType = {
   isLoggedIn: false,
-  setIsLoggedIn: () => {}, // Add this default empty function
+  setIsLoggedIn: () => {},
   setIsLoading: () => {},
   user: null,
   setUser: () => {},
@@ -32,29 +33,36 @@ export const useGlobalContext = () => useContext(GlobalContext);
 
 const GlobalProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [user, setUser] = useState<string | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
 
   useEffect(() => {
-    const socket = io(`${BASE_URL}`);
-    const handleUserLoggedOut = () => {
+    let socket: ReturnType<typeof io> | null = null;
+    let cancelled = false;
+
+    const handleSessionRevoked = () => {
       setIsLoggedIn(false);
       setUser(null);
       router.replace('/sign-in');
     };
-    const handleUserLoggedIn = (data: { userId: string; username: string }) => {
-      console.log("User logged in event received", data);
+
+    const connectSocket = async () => {
+      const token = await getSessionToken();
+      if (!token || cancelled) return;
+      socket = io(SOCKET_URL, { auth: { token } });
+      socket.on('session:revoked', handleSessionRevoked);
+      socket.on('sessions:changed', () => {});
+      socket.on('notification:new', () => {});
     };
-    socket.on('user_logged_out', handleUserLoggedOut);
-    socket.on('user_logged_in', handleUserLoggedIn);
+    connectSocket();
   
     return () => {
-      socket.off('user_logged_out', handleUserLoggedOut);
-      socket.off('user_logged_in', handleUserLoggedIn);
-      socket.disconnect();
+      cancelled = true;
+      socket?.off('session:revoked', handleSessionRevoked);
+      socket?.disconnect();
     };
-  }, []);
+  }, [isLoggedIn]);
 
   useEffect(() => {
     getCurrentUser()
@@ -77,7 +85,7 @@ const GlobalProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
     <GlobalContext.Provider
       value={{
         isLoggedIn,
-        setIsLoggedIn, // Add this to the context provider
+        setIsLoggedIn,
         setIsLoading,
         user,
         setUser,

@@ -1,9 +1,8 @@
 import { ScrollView, Text, View, Alert } from "react-native";
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
 import FormField from "../../components/FormField";
 import CustomButton from "../../components/CustomButton";
-import io from "socket.io-client";
 import useNetworkStatus from "../../hooks/useNetworkStatus";
 import { Link, useRouter, useLocalSearchParams } from "expo-router";
 import CustomDropdown from "@/components/CustomDropdown";
@@ -22,7 +21,6 @@ const registerUser = async (
   },
   authentication: string,
   timeoutDuration: number | undefined,
-  socket: { emit: (arg0: string, arg1: { username: any }) => void } | null,
   router,
   isConnected: boolean,
   setError: {
@@ -69,7 +67,6 @@ const registerUser = async (
     const data = await response.json();
     if (response.ok) {
       console.log("Registration success", data);
-      socket.emit("user_registered", { username: userData.username });
       router.replace(
         `/sign-in?username=${encodeURIComponent(
           userData.username
@@ -115,14 +112,8 @@ const SignUp3 = () => {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState({ username: "", email: "", other: "" });
-  const [socket, setSocket] = useState(null);
   const isConnected = useNetworkStatus();
 
-  useEffect(() => {
-    const newSocket = io(`${BASE_URL}`);
-    setSocket(newSocket);
-    return () => newSocket.close();
-  }, []);
   const validateAge = (age: string) => {
     const numericAge = parseInt(age, 10);
     if (!age) return "Age cannot be empty.";
@@ -152,7 +143,6 @@ const SignUp3 = () => {
       userData,
       "your_token_here",
       timeoutDuration,
-      socket,
       router,
       isConnected,
       setError

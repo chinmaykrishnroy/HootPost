@@ -11,7 +11,7 @@ import {
 import { Image } from "expo-image";
 import { images, icons } from "@/constants";
 import BASE_URL from "../config.js";
-import CustomButton from "./CustomButton";
+import ModalActionButton from "./ModalActionButton";
 import { useGlobalContext } from "@/context/GlobalProvider";
 
 const formatDate = (dateString) => {
@@ -26,6 +26,8 @@ const UserModal = ({ userId, isVisible, onClose }) => {
   const { user: globalUser } = useGlobalContext();
   const [userData, setUserData] = useState(null);
   const { width } = Dimensions.get('window');
+  const modalWidth = Math.min(width - 24, 420);
+  const mediaSize = modalWidth - 16;
   const [loadingConnect, setLoadingConnect] = useState(false);
   const [loadingBlock, setLoadingBlock] = useState(false);
   const [loadingDisconnect, setLoadingDisconnect] = useState(false);
@@ -154,13 +156,13 @@ const UserModal = ({ userId, isVisible, onClose }) => {
     return (
       <Modal transparent={true} visible={isVisible} animationType="fade">
         <View className="flex-1 justify-center items-center bg-black/60">
-            <ActivityIndicator size="undefined" color="#f33eb7" />
+            <ActivityIndicator size="large" color="#f33eb7" />
           <TouchableOpacity onPress={onClose}>
             <Image
               source={icons.close}
               style={{ width: 30, height: 30, tintColor: '#f33eb7' }}
             />
-          </ TouchableOpacity>
+          </TouchableOpacity>
         </View>
       </Modal>
     );
@@ -168,16 +170,16 @@ const UserModal = ({ userId, isVisible, onClose }) => {
 
   const connectButtonTitle = userData.isConnected ? "Connected" : userData.hasRequested ? "Requested" : "Connect";
   const connectButtonDisabled = userData.isBlocked || userData.isConnected;
-  const blockButtonDisabled = loadingConnect || userData.isBlocked;
 
   return (
     <Modal transparent={true} visible={isVisible} animationType="fade">
       <TouchableWithoutFeedback onPress={onClose}>
         <View className="flex-1 justify-center items-center bg-black/60">
           <TouchableWithoutFeedback onPress={() => {}}>
-            <View className="w-full mx-2 max-w-md p-2 bg-black2-200 rounded-3xl">
-              <View className="flex-row justify-between items-center mb-2 ml-8">
-                <Text className="text-pink-100 font-spotifymixuititle text-4xl mx-auto">
+            <View className="p-2 bg-black2-200 rounded-3xl" style={{ width: modalWidth }}>
+              <View className="flex-row items-center mb-2">
+                <View className="w-8" />
+                <Text className="text-pink-100 font-spotifymixuititle text-4xl flex-1 text-center" numberOfLines={1}>
                   {userData.firstName} {userData.lastName}
                 </Text>
                 <TouchableOpacity onPress={onClose}>
@@ -189,7 +191,7 @@ const UserModal = ({ userId, isVisible, onClose }) => {
                 </TouchableOpacity>
               </View>
 
-              <View className="mb-2 overflow-hidden relative" style={{ width: width, height: width }}>
+              <View className="mb-2 overflow-hidden relative self-center" style={{ width: mediaSize, height: mediaSize }}>
                 {isLoading && !hasError && (
                   <View className="absolute top-0 left-0 right-0 bottom-0 flex justify-center items-center">
                     <ActivityIndicator 
@@ -246,25 +248,22 @@ const UserModal = ({ userId, isVisible, onClose }) => {
               
               <Text className="text-gray-300 font-spotifymixui text-lg text-center mb-2">{userData.bio}</Text>
 
-              <View className="flex-row justify-around my-1 mx-2">
+              <View className="flex-row gap-3 my-1 mx-1">
                 {globalUser.username !== userData.username && (
-                  <>
-                    <CustomButton
+                  <View className="flex-row gap-3 flex-1">
+                    <ModalActionButton
                       title={connectButtonTitle}
-                      handlePress={userData.isConnected ? null : userData.hasRequested ? handleUnsendRequest : handleConnect}
-                      containerStyles={"w-1/2 mr-2"}
-                      isLoading={loadingConnect}
+                      onPress={userData.isConnected ? null : userData.hasRequested ? handleUnsendRequest : handleConnect}
                       disabled={connectButtonDisabled}
                     />
-                    <CustomButton
+                    <ModalActionButton
                       title={userData.isBlocked ? "BLOCKED" : userData.isConnected ? "Disconnect" : "Block"}
-                      handlePress={userData.isConnected ? handleDisconnect : handleBlock}
-                      containerStyles={"w-1/2 ml-2"}
-                      background={userData.isConnected ? "bg-pink-400" : "bg-red-600"}
-                      isLoading={loadingBlock || loadingDisconnect}
+                      onPress={userData.isConnected ? handleDisconnect : handleBlock}
+                      danger={!userData.isConnected}
+                      variant={userData.isConnected ? "primary" : "primary"}
                       disabled={loadingBlock || loadingDisconnect}
                     />
-                  </>
+                  </View>
                 )}
               </View>
             </View>

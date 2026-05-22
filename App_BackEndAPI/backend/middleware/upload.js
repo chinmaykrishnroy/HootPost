@@ -1,14 +1,32 @@
 import multer from 'multer';
+import config from '../config/config.js';
 
-// Set up multer to handle file uploads
 const storage = multer.memoryStorage();
 
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 500 * 1024 * 1024 },
+const imageMimeTypes = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+]);
+
+export const imageUpload = multer({
+  storage,
+  limits: { fileSize: config.maxImageUploadBytes },
   fileFilter: (req, file, cb) => {
-    return cb(null, true);
-  }
+    if (!imageMimeTypes.has(file.mimetype)) {
+      cb(new Error('Only JPEG, PNG, GIF, WebP, HEIC, and HEIF images are allowed'));
+      return;
+    }
+    cb(null, true);
+  },
 });
 
-export default upload;
+export const attachmentUpload = multer({
+  storage,
+  limits: { fileSize: config.maxAttachmentUploadBytes },
+});
+
+export default imageUpload;

@@ -1,9 +1,8 @@
 import User from '../models/User.js';
 
 export const getCurrentUser = async (req, res, next) => {
-
-    const userId = req.currentUser?._id; // Access _id from req.currentUser instead
-
+    if (req.currentUser?.username) return next();
+    const userId = req.currentUser?._id;
     if (!userId) {
         return res.status(401).send('User not authenticated');
     }
@@ -13,7 +12,7 @@ export const getCurrentUser = async (req, res, next) => {
         return res.status(404).send('Current user not found');
     }
 
-    req.currentUser = currentUser; // This line is already correct
+    req.currentUser = currentUser;
     next();
 };
 

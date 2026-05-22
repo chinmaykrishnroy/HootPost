@@ -10,6 +10,7 @@ npm-debug.*
 *.mobileprovision
 *.orig.*
 web-build/
+App_FrontEnd/expo-start.log
 
 # macOS
 .DS_Store
