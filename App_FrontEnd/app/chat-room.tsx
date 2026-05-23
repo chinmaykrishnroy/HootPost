@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Dimensions,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -39,6 +40,7 @@ import { getRealtimeSocket } from '@/lib/realtime';
 
 const MAX_MESSAGE_LENGTH = 4000;
 const COLLAPSED_MESSAGE_LENGTH = 700;
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 const firstParam = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] : value;
 const messageId = (message: ChatMessage) => message._id || `${message.sender}-${message.createdAt}-${message.content}`;
@@ -70,10 +72,10 @@ const latestReceipt = (receipts?: Record<string, string>, excludeUserId?: string
 
 const receiptMark = (message: ChatMessage, currentUserId?: string) => {
   const seenAt = latestReceipt(message.seenAtByUser, currentUserId);
-  if (seenAt) return { mark: '✓✓', color: '#1497ff' };
+  if (seenAt) return { mark: '\u2713\u2713', color: '#1497ff' };
   const deliveredAt = latestReceipt(message.deliveredAtByUser, currentUserId);
-  if (deliveredAt) return { mark: '✓✓', color: 'rgba(0,0,0,0.55)' };
-  return { mark: '✓', color: 'rgba(0,0,0,0.55)' };
+  if (deliveredAt) return { mark: '\u2713\u2713', color: 'rgba(0,0,0,0.55)' };
+  return { mark: '\u2713', color: 'rgba(0,0,0,0.55)' };
 };
 
 const isTableText = (text: string) =>
@@ -150,7 +152,7 @@ const MarkdownMessage = ({ content, mine }: { content: string; mine: boolean }) 
     return (
       <View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <Text selectable style={{ color: textColor, fontFamily: 'monospace', lineHeight: 22 }}>
+          <Text style={{ color: textColor, fontFamily: 'monospace', lineHeight: 22 }}>
             {visibleContent}
           </Text>
         </ScrollView>
@@ -165,7 +167,7 @@ const MarkdownMessage = ({ content, mine }: { content: string; mine: boolean }) 
 
   return (
     <View>
-      <Text selectable style={{ color: textColor, fontSize: 16, lineHeight: 22 }}>
+      <Text style={{ color: textColor, fontSize: 16, lineHeight: 22 }}>
         {renderInlineMarkdown(visibleContent, textColor, linkColor)}
       </Text>
       {shouldCollapse && (
@@ -186,7 +188,6 @@ const MessageBubble = ({
   onReply,
   onJumpToReply,
   onOpenActions,
-  onSelectText,
 }: {
   item: ChatMessage;
   currentUserId?: string;
@@ -195,8 +196,7 @@ const MessageBubble = ({
   highlighted: boolean;
   onReply: (message: ChatMessage) => void;
   onJumpToReply: (messageId?: string) => void;
-  onOpenActions: (message: ChatMessage, mine: boolean) => void;
-  onSelectText: (message: ChatMessage) => void;
+  onOpenActions: (message: ChatMessage, mine: boolean, point: { x: number; y: number }) => void;
 }) => {
   const translateX = useSharedValue(0);
   const startX = useSharedValue(0);
@@ -205,6 +205,10 @@ const MessageBubble = ({
   const deliveredAt = latestReceipt(item.deliveredAtByUser, currentUserId);
   const seenAt = latestReceipt(item.seenAtByUser, currentUserId);
   const mark = receiptMark(item, currentUserId);
+  const reply = typeof item.replyTo === 'object' ? item.replyTo : null;
+  const replySender = typeof reply?.sender === 'object'
+    ? reply.sender?.firstName || reply.sender?.username || 'Message'
+    : 'Message';
 
   const panGesture = useMemo(() => Gesture.Pan()
     .activeOffsetX([-12, 12])
@@ -212,42 +216,38 @@ const MessageBubble = ({
       startX.value = translateX.value;
     })
     .onUpdate((event) => {
-      const min = mine ? -132 : 0;
-      translateX.value = Math.max(min, Math.min(72, startX.value + event.translationX));
+      const max = mine ? 132 : 0;
+      translateX.value = Math.max(-72, Math.min(max, startX.value + event.translationX));
     })
     .onEnd((event) => {
-      const wasOpen = startX.value < -20;
-      if (wasOpen && event.translationX > 24) {
+      const wasOpen = startX.value > 20;
+      if (wasOpen && event.translationX < -24) {
         translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
         return;
       }
-      if (!wasOpen && event.translationX > 56) {
+      if (!wasOpen && event.translationX < -56) {
         runOnJS(onReply)(item);
         translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
         return;
       }
-      if (mine && startX.value + event.translationX < -56) {
-        translateX.value = withSpring(-132, { damping: 18, stiffness: 220 });
+      if (mine && startX.value + event.translationX > 56) {
+        translateX.value = withSpring(132, { damping: 18, stiffness: 220 });
         return;
       }
       translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
     }), [item, mine, onReply, startX, translateX]);
 
-  const doubleTapGesture = useMemo(() => Gesture.Tap()
-    .numberOfTaps(2)
-    .onEnd(() => runOnJS(onSelectText)(item)), [item, onSelectText]);
-
   const longPressGesture = useMemo(() => Gesture.LongPress()
     .minDuration(380)
-    .onStart(() => runOnJS(onOpenActions)(item, mine)), [item, mine, onOpenActions]);
+    .onStart((event) => runOnJS(onOpenActions)(item, mine, { x: event.absoluteX, y: event.absoluteY })), [item, mine, onOpenActions]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }],
   }));
 
   const detailStyle = useAnimatedStyle(() => ({
-    opacity: Math.min(1, Math.abs(translateX.value) / 80),
-    transform: [{ translateX: 132 + translateX.value }],
+    opacity: Math.min(1, Math.max(0, translateX.value) / 80),
+    transform: [{ translateX: Math.max(0, translateX.value) - 132 }],
   }));
 
   if (item.type === 'system') {
@@ -265,7 +265,7 @@ const MessageBubble = ({
       {mine && (
         <Animated.View
           pointerEvents="none"
-          style={[detailStyle, { position: 'absolute', right: 46, top: 8, width: 126, zIndex: 0 }]}
+          style={[detailStyle, { position: 'absolute', right: 174, top: 8, width: 132, zIndex: 0 }]}
           className="rounded-2xl bg-[#151515] border border-[#252525] px-3 py-2"
         >
           <Text className="text-gray-400 font-spotifymixui text-[11px]">Sent {formatDetailTime(item.createdAt)}</Text>
@@ -273,7 +273,7 @@ const MessageBubble = ({
           <Text className="text-gray-400 font-spotifymixui text-[11px]">Seen {formatDetailTime(seenAt)}</Text>
         </Animated.View>
       )}
-      <GestureDetector gesture={Gesture.Simultaneous(panGesture, longPressGesture, doubleTapGesture)}>
+      <GestureDetector gesture={Gesture.Simultaneous(panGesture, longPressGesture)}>
         <Animated.View style={[animatedStyle, { zIndex: 1 }]} className={`flex-row ${mine ? 'self-end flex-row-reverse' : 'self-start'} max-w-[94%]`}>
           <ExpoImage source={avatar} style={{ width: 30, height: 30, borderRadius: 11, marginHorizontal: 6, marginTop: 4 }} contentFit="cover" />
           <View className={`max-w-[82%] ${mine ? 'items-end' : 'items-start'}`}>
@@ -287,18 +287,23 @@ const MessageBubble = ({
                 shadowRadius: 12,
               } : null}
             >
-              {!!item.replyTo && (
+              {!!reply && (
                 <TouchableOpacity
                   activeOpacity={0.78}
-                  onPress={() => onJumpToReply(item.replyTo?._id)}
-                  className="mb-2 rounded-xl px-3 py-2 bg-black/15 border-l-2 border-white/70"
+                  onPress={() => onJumpToReply(reply._id)}
+                  className="mb-2 overflow-hidden rounded-xl bg-black/15"
                 >
-                  <Text className={`${mine ? 'text-black' : 'text-white'} font-spotifymixuititle text-xs`} numberOfLines={1}>
-                    Reply to {typeof item.replyTo.sender === 'object' ? item.replyTo.sender?.firstName || item.replyTo.sender?.username : 'message'}
-                  </Text>
-                  <Text className={`${mine ? 'text-black/70' : 'text-white/75'} font-spotifymixui text-xs`} numberOfLines={2}>
-                    {item.replyTo.content}
-                  </Text>
+                  <View className="flex-row">
+                    <View className={`${mine ? 'bg-[#d80c94]' : 'bg-white/85'} w-1`} />
+                    <View className="flex-1 px-3 py-2">
+                      <Text className={`${mine ? 'text-[#7a0052]' : 'text-white'} font-spotifymixuititle text-xs`} numberOfLines={1}>
+                        {replySender}
+                      </Text>
+                      <Text className={`${mine ? 'text-black/70' : 'text-white/75'} font-spotifymixui text-xs`} numberOfLines={2}>
+                        {reply.content || 'Attachment'}
+                      </Text>
+                    </View>
+                  </View>
                 </TouchableOpacity>
               )}
               <MarkdownMessage content={item.content || ''} mine={mine} />
@@ -349,8 +354,7 @@ const ChatRoom = () => {
   const [isTyping, setIsTyping] = useState(false);
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
-  const [actionMessage, setActionMessage] = useState<{ message: ChatMessage; mine: boolean } | null>(null);
-  const [selectionMessage, setSelectionMessage] = useState<ChatMessage | null>(null);
+  const [actionMessage, setActionMessage] = useState<{ message: ChatMessage; mine: boolean; point: { x: number; y: number } } | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const inputRef = useRef<TextInput>(null);
@@ -513,6 +517,16 @@ const ChatRoom = () => {
     return map;
   }, [chat?.participants]);
 
+  const currentParticipant = useMemo(() => (
+    chat?.participants?.find((participant) => participant._id === user?.userId || participant.username === user?.username)
+  ), [chat?.participants, user?.userId, user?.username]);
+
+  const otherParticipant = useMemo(() => (
+    chat?.participants?.find((participant) => participant.username !== user?.username)
+      || (username ? participantByUsername.get(username) : undefined)
+      || chat?.participants?.[0]
+  ), [chat?.participants, participantByUsername, user?.username, username]);
+
   const senderForMessage = useCallback((message: ChatMessage) => {
     if (typeof message.sender === 'object') return message.sender;
     return participantById.get(message.sender) || participantByUsername.get(senderUsername(message));
@@ -575,9 +589,22 @@ const ChatRoom = () => {
   };
 
   const openAttachments = () => {
+    if (!chatId || !username) return;
     router.push({
       pathname: '/chat-attachments',
-      params: { chatId, username, title: firstName },
+      params: { chatId, username, title: otherParticipant?.firstName || firstName },
+    });
+  };
+
+  const openChatProfile = () => {
+    if (!username) return;
+    router.push({
+      pathname: '/chat-user-profile',
+      params: {
+        username,
+        chatId,
+        title: otherParticipant?.firstName || firstName,
+      },
     });
   };
 
@@ -603,8 +630,18 @@ const ChatRoom = () => {
   const copyMessage = async (message: ChatMessage) => {
     await Clipboard.setStringAsync(message.content || '');
     setActionMessage(null);
-    setSelectionMessage(null);
   };
+
+  const actionMenuStyle = useMemo(() => {
+    if (!actionMessage) return undefined;
+    const menuWidth = 226;
+    const menuHeight = actionMessage.mine ? 224 : 126;
+    return {
+      width: menuWidth,
+      left: Math.min(Math.max(actionMessage.point.x - (actionMessage.mine ? menuWidth - 34 : 34), 12), screenWidth - menuWidth - 12),
+      top: Math.min(Math.max(actionMessage.point.y - 28, 66), screenHeight - menuHeight - 24),
+    };
+  }, [actionMessage]);
 
   return (
     <SafeAreaView className="flex-1 bg-[#050505]">
@@ -640,17 +677,22 @@ const ChatRoom = () => {
               <HeaderBackButton />
               <TouchableOpacity
                 activeOpacity={0.86}
-                onPress={openAttachments}
-                className="flex-1 h-10 rounded-xl bg-[#050505] border border-[#252525] justify-center px-3 ml-3"
+                onPress={openChatProfile}
+                className="flex-1 h-10 flex-row items-center bg-[#050505] px-2 ml-3"
               >
+                <ExpoImage
+                  source={otherParticipant?.profilePicture ? { uri: otherParticipant.profilePicture } : images.owl}
+                  style={{ width: 31, height: 31, borderRadius: 11, marginRight: 9, backgroundColor: '#111' }}
+                  contentFit="cover"
+                />
                 <Text className="text-secondary-300 font-spotifymixuititle text-lg" numberOfLines={1}>
-                  {firstName}
+                  {otherParticipant?.firstName || firstName}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity activeOpacity={0.86} onPress={() => setIsSearching(true)} className="h-10 w-10 items-center justify-center ml-2">
                 <Image source={icons.search} className="w-6 h-6" style={{ tintColor: '#f33eb7' }} />
               </TouchableOpacity>
-              <TouchableOpacity activeOpacity={0.86} className="h-10 w-10 items-center justify-center ml-1 mr-3">
+              <TouchableOpacity activeOpacity={0.86} onPress={openAttachments} className="h-10 w-10 items-center justify-center ml-1 mr-3">
                 <Image source={icons.menu} className="w-6 h-6" style={{ tintColor: '#f33eb7' }} />
               </TouchableOpacity>
             </>
@@ -678,7 +720,7 @@ const ChatRoom = () => {
                 item={item}
                 mine={mine}
                 currentUserId={user?.userId}
-                sender={senderForMessage(item)}
+                sender={mine ? currentParticipant || senderForMessage(item) : senderForMessage(item)}
                 highlighted={highlightedId === item._id}
                 onReply={(message) => {
                   setEditingMessage(null);
@@ -686,8 +728,7 @@ const ChatRoom = () => {
                   setTimeout(() => inputRef.current?.focus(), 100);
                 }}
                 onJumpToReply={jumpToMessage}
-                onOpenActions={(message, isMine) => setActionMessage({ message, mine: isMine })}
-                onSelectText={setSelectionMessage}
+                onOpenActions={(message, isMine, point) => setActionMessage({ message, mine: isMine, point })}
               />
             );
           }}
@@ -760,9 +801,9 @@ const ChatRoom = () => {
         )}
 
         {!!actionMessage && (
-          <View pointerEvents="box-none" className="absolute inset-0 justify-center px-8">
+          <View pointerEvents="box-none" className="absolute inset-0">
             <TouchableOpacity className="absolute inset-0" activeOpacity={1} onPress={() => setActionMessage(null)} />
-            <View className={`${actionMessage.mine ? 'self-end' : 'self-start'} bg-[#111] border border-[#333] rounded-2xl p-2 min-w-[180px]`}>
+            <View className="absolute bg-[#111] border border-[#333] rounded-2xl p-2" style={actionMenuStyle}>
               <MenuAction title="Reply" icon="corner-up-left" onPress={() => { setReplyingTo(actionMessage.message); setActionMessage(null); inputRef.current?.focus(); }} />
               <MenuAction title="Copy" icon="copy" onPress={() => copyMessage(actionMessage.message)} />
               {actionMessage.mine && (
@@ -771,25 +812,6 @@ const ChatRoom = () => {
                   <MenuAction title="Delete for everyone" icon="trash-2" danger onPress={() => deleteMessageForAll(actionMessage.message)} />
                 </>
               )}
-            </View>
-          </View>
-        )}
-
-        {!!selectionMessage && (
-          <View pointerEvents="box-none" className="absolute inset-0 justify-center px-6">
-            <TouchableOpacity className="absolute inset-0 bg-black/30" activeOpacity={1} onPress={() => setSelectionMessage(null)} />
-            <View className="bg-[#111] border border-[#333] rounded-2xl p-4">
-              <Text selectable className="text-secondary-300 font-spotifymixui text-base max-h-48">
-                {selectionMessage.content}
-              </Text>
-              <View className="flex-row gap-3 mt-4">
-                <TouchableOpacity onPress={() => copyMessage(selectionMessage)} className="flex-1 bg-[#222] rounded-xl min-h-[46px] items-center justify-center">
-                  <Text className="text-secondary-300 font-spotifymixuititle">Select all</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => copyMessage(selectionMessage)} className="flex-1 bg-primary-200 rounded-xl min-h-[46px] items-center justify-center">
-                  <Text className="text-black font-spotifymixuititle">Copy</Text>
-                </TouchableOpacity>
-              </View>
             </View>
           </View>
         )}

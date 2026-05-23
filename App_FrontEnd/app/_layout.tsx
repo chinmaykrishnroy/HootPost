@@ -77,6 +77,10 @@ const RootLayout = () => {
           options={{ headerShown: false }}
         />
         <Stack.Screen
+          name="chat-user-profile"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
           name="chat-attachments"
           options={{ headerShown: false }}
         />

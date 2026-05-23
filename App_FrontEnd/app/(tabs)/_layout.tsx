@@ -9,7 +9,7 @@ import { SearchScreenOptions } from "./search";
 
 const TabIcon = ({ icon, color }) => {
   return (
-    <View className="items-center justify-center h-16">
+    <View className="items-center justify-center h-full w-full">
       <Image
         source={icon}
         resizeMode="contain"
@@ -34,12 +34,18 @@ const TabLayout = () => {
           backgroundColor: isDarkMode ? "#010101" : "#e6a7d1",
           borderTopColor: isDarkMode ? "#323532" : "#e2b39b",
           height: 72,
-          paddingTop: 0,
-          paddingBottom: 8,
+          paddingTop: 4,
+          paddingBottom: 4,
           alignItems: "center",
         },
+        tabBarIconStyle: {
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          marginTop: 0,
+        },
         tabBarItemStyle: {
-          height: 64,
+          height: "100%",
           justifyContent: "center",
           alignItems: "center",
         },

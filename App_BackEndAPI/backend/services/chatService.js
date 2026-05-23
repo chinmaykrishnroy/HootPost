@@ -68,13 +68,21 @@ const serializeMessageSender = async (sender) => {
 };
 
 const summarizeReply = async (reply) => {
-  if (!reply || typeof reply !== "object" || !reply.content) return reply || null;
+  if (!reply) return null;
+  let rawReply = reply;
+  if (typeof rawReply !== "object" || !rawReply.content) {
+    rawReply = await Message.findById(reply)
+      .select("sender type content createdAt")
+      .populate("sender", "username firstName lastName profilePicture profilePictureThumb")
+      .lean();
+  }
+  if (!rawReply?.content) return null;
   return {
-    _id: reply._id,
-    sender: await serializeMessageSender(reply.sender),
-    type: reply.type,
-    content: reply.content,
-    createdAt: reply.createdAt,
+    _id: rawReply._id,
+    sender: await serializeMessageSender(rawReply.sender),
+    type: rawReply.type,
+    content: rawReply.content,
+    createdAt: rawReply.createdAt,
   };
 };
 
