@@ -25,6 +25,7 @@ import HeaderBackButton from '@/components/HeaderBackButton';
 import LineEdit from '@/components/LineEdit';
 import { icons, images } from '@/constants';
 import { useGlobalContext } from '@/context/GlobalProvider';
+import { CHAT_SETTINGS_DEFAULTS } from '@/lib/chatSettings';
 import {
   ChatMessage,
   ChatParticipant,
@@ -264,6 +265,7 @@ const MessageBubble = ({
   mine,
   sender,
   highlighted,
+  showSenderProfilePicture,
   onReply,
   onJumpToReply,
   onOpenActions,
@@ -273,6 +275,7 @@ const MessageBubble = ({
   mine: boolean;
   sender?: ChatParticipant;
   highlighted: boolean;
+  showSenderProfilePicture: boolean;
   onReply: (message: ChatMessage) => void;
   onJumpToReply: (messageId?: string) => void;
   onOpenActions: (message: ChatMessage, mine: boolean, point: { x: number; y: number }) => void;
@@ -347,9 +350,11 @@ const MessageBubble = ({
         </Animated.View>
       )}
       <GestureDetector gesture={Gesture.Simultaneous(panGesture, longPressGesture)}>
-        <Animated.View style={[animatedStyle, { zIndex: 1 }]} className={`flex-row ${mine ? 'self-end flex-row-reverse' : 'self-start'} max-w-[94%]`}>
-          <ExpoImage source={avatar} style={{ width: 30, height: 30, borderRadius: 11, marginHorizontal: 6, marginTop: 4 }} contentFit="cover" />
-          <View className={`max-w-[82%] ${mine ? 'items-end' : 'items-start'}`}>
+        <Animated.View style={[animatedStyle, { zIndex: 1 }]} className={`flex-row ${mine ? 'self-end flex-row-reverse' : 'self-start'} ${showSenderProfilePicture ? 'max-w-[94%]' : 'max-w-[88%]'}`}>
+          {showSenderProfilePicture && (
+            <ExpoImage source={avatar} style={{ width: 30, height: 30, borderRadius: 11, marginHorizontal: 6, marginTop: 4 }} contentFit="cover" />
+          )}
+          <View className={`${showSenderProfilePicture ? 'max-w-[82%]' : 'max-w-full'} ${mine ? 'items-end' : 'items-start'}`}>
             <View
               className={`${mine ? 'bg-pink-200' : 'bg-primary-200'} rounded-2xl px-4 py-3`}
               style={highlighted ? {
@@ -438,6 +443,7 @@ const ChatRoom = () => {
   const socketRef = useRef<Awaited<ReturnType<typeof getRealtimeSocket>> | null>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chatId = chat?._id || initialChatId;
+  const showSenderProfilePictures = CHAT_SETTINGS_DEFAULTS.showSenderProfilePictures;
 
   const mergeMessage = useCallback((message: ChatMessage) => {
     setMessages((current) => mergeChatMessages(current, [message]));
@@ -483,7 +489,7 @@ const ChatRoom = () => {
       }
     });
 
-    const usernames = [username, user?.username].filter(Boolean) as string[];
+    const usernames = [username, showSenderProfilePictures ? user?.username : null].filter(Boolean) as string[];
     usernames.forEach((name) => {
       if (knownPictures.get(name) || profilePictureByUsername[name]) return;
       loadUserProfileSummary(name)
@@ -495,7 +501,7 @@ const ChatRoom = () => {
         })
         .catch(() => {});
     });
-  }, [chat?.participants, profilePictureByUsername, user?.username, username]);
+  }, [chat?.participants, profilePictureByUsername, showSenderProfilePictures, user?.username, username]);
 
   const loadOlderMessages = useCallback(async () => {
     if (!username || !nextCursor || !hasMoreMessages || isLoadingOlder) return;
@@ -887,6 +893,7 @@ const ChatRoom = () => {
                 currentUserId={user?.userId}
                 sender={senderForBubble(item, mine)}
                 highlighted={highlightedId === item._id}
+                showSenderProfilePicture={showSenderProfilePictures}
                 onReply={(message) => {
                   setEditingMessage(null);
                   setReplyingTo(message);
