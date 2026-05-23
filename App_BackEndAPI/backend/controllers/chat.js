@@ -6,6 +6,7 @@ import { uploadAttachment } from "../services/mediaService.js";
 import {
   emitChatEvent,
   ensureDirectChat,
+  createReplySnapshot,
   extractLinks,
   loadMessagesPage,
   markMessagesDelivered,
@@ -89,8 +90,12 @@ export const sendMessage = asyncHandler(async (req, res) => {
   if (!content && !req.file) throw badRequest("Message content or file must be provided.");
 
   const chat = await ensureDirectChat(req.currentUser, req.targetUser);
+  let replyMessage = null;
   if (replyTo) {
-    const replyMessage = await Message.findOne({ _id: replyTo, chat: chat._id, deletedAt: null }).select("_id");
+    replyMessage = await Message.findOne({ _id: replyTo, chat: chat._id, deletedAt: null })
+      .select("chat sender type content fileName createdAt")
+      .populate("sender", "username firstName lastName profilePicture profilePictureThumb")
+      .lean();
     if (!replyMessage) throw badRequest("Reply target does not belong to this chat.");
   }
   const attachment = req.file
@@ -108,6 +113,7 @@ export const sendMessage = asyncHandler(async (req, res) => {
     fileSize: req.file?.size,
     fileType: attachment?.mime,
     replyTo,
+    replySnapshot: createReplySnapshot(replyMessage),
     metadata: { links: extractLinks(content) },
     private: isPrivate,
     seenBy: [req.currentUser._id],
@@ -133,7 +139,7 @@ export const sendMessage = asyncHandler(async (req, res) => {
     .populate("sender", "username firstName lastName profilePicture profilePictureThumb")
     .populate({
       path: "replyTo",
-      select: "sender type content createdAt",
+      select: "chat sender type content fileName createdAt",
       populate: { path: "sender", select: "username firstName lastName profilePicture profilePictureThumb" },
     })
     .lean();
@@ -176,14 +182,15 @@ export const loadMessageContext = asyncHandler(async (req, res) => {
     { path: "sender", select: "username firstName lastName profilePicture profilePictureThumb" },
     {
       path: "replyTo",
-      select: "sender type content createdAt",
+      select: "chat sender type content fileName createdAt",
       populate: { path: "sender", select: "username firstName lastName profilePicture profilePictureThumb" },
     },
   ];
+  const contextLimit = 25;
   const [older, newer] = await Promise.all([
     Message.find({ chat: chat._id, deletedAt: null, createdAt: { $lte: target.createdAt } })
       .sort({ createdAt: -1 })
-      .limit(25)
+      .limit(contextLimit + 1)
       .populate(populate)
       .lean(),
     Message.find({ chat: chat._id, deletedAt: null, createdAt: { $gt: target.createdAt } })
@@ -192,7 +199,8 @@ export const loadMessageContext = asyncHandler(async (req, res) => {
       .populate(populate)
       .lean(),
   ]);
-  const ordered = [...older.reverse(), ...newer];
+  const hasMore = older.length > contextLimit;
+  const ordered = [...older.slice(0, contextLimit).reverse(), ...newer];
   const seen = new Set();
   const unique = ordered.filter((message) => {
     const id = message._id.toString();
@@ -204,6 +212,8 @@ export const loadMessageContext = asyncHandler(async (req, res) => {
   res.status(200).json({
     chat: await serializeChat(chat, req.currentUser._id),
     messages: await serializeMessages(unique),
+    nextCursor: hasMore && unique[0]?.createdAt ? unique[0].createdAt : null,
+    hasMore,
     focusMessageId: req.params.messageId,
   });
 });
@@ -237,7 +247,7 @@ export const updateMessage = asyncHandler(async (req, res) => {
     .populate("sender", "username firstName lastName profilePicture profilePictureThumb")
     .populate({
       path: "replyTo",
-      select: "sender type content createdAt",
+      select: "chat sender type content fileName createdAt",
       populate: { path: "sender", select: "username firstName lastName profilePicture profilePictureThumb" },
     })
     .lean();
@@ -271,7 +281,7 @@ export const searchMessage = asyncHandler(async (req, res) => {
     .populate("sender", "username firstName lastName profilePicture profilePictureThumb")
     .populate({
       path: "replyTo",
-      select: "sender type content createdAt",
+      select: "chat sender type content fileName createdAt",
       populate: { path: "sender", select: "username firstName lastName profilePicture profilePictureThumb" },
     })
     .lean();

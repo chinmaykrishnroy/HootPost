@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Dimensions,
   FlatList,
@@ -70,6 +71,29 @@ const replyPreviewFor = (message?: ChatMessage | null): ChatMessage | null => {
     createdAt: message.createdAt,
     updatedAt: message.updatedAt,
   };
+};
+
+const mergeChatMessage = (current: ChatMessage, incoming: ChatMessage): ChatMessage => ({
+  ...current,
+  ...incoming,
+  sender: typeof incoming.sender === 'object' ? incoming.sender : current.sender,
+  replyTo: hasReplyPreview(incoming.replyTo) ? incoming.replyTo : current.replyTo,
+  metadata: incoming.metadata || current.metadata,
+  deliveredAtByUser: incoming.deliveredAtByUser || current.deliveredAtByUser,
+  seenAtByUser: incoming.seenAtByUser || current.seenAtByUser,
+});
+
+const mergeChatMessages = (current: ChatMessage[], incoming: ChatMessage[]) => {
+  const byId = new Map<string, ChatMessage>();
+  current.forEach((message) => byId.set(messageId(message), message));
+  incoming.forEach((message) => {
+    const id = messageId(message);
+    const existing = byId.get(id);
+    byId.set(id, existing ? mergeChatMessage(existing, message) : message);
+  });
+  return Array.from(byId.values()).sort((a, b) =>
+    new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
+  );
 };
 
 const formatLocalTime = (value?: string) => {
@@ -379,6 +403,9 @@ const ChatRoom = () => {
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const [actionMessage, setActionMessage] = useState<{ message: ChatMessage; mine: boolean; point: { x: number; y: number } } | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const inputRef = useRef<TextInput>(null);
   const socketRef = useRef<Awaited<ReturnType<typeof getRealtimeSocket>> | null>(null);
@@ -386,27 +413,7 @@ const ChatRoom = () => {
   const chatId = chat?._id || initialChatId;
 
   const mergeMessage = useCallback((message: ChatMessage) => {
-    setMessages((current) => {
-      const id = messageId(message);
-      const existingIndex = current.findIndex((item) => messageId(item) === id);
-      const next = existingIndex >= 0
-        ? current.map((item, index) => {
-            if (index !== existingIndex) return item;
-            return {
-              ...item,
-              ...message,
-              sender: typeof message.sender === 'object' ? message.sender : item.sender,
-              replyTo: hasReplyPreview(message.replyTo) ? message.replyTo : item.replyTo,
-              metadata: message.metadata || item.metadata,
-              deliveredAtByUser: message.deliveredAtByUser || item.deliveredAtByUser,
-              seenAtByUser: message.seenAtByUser || item.seenAtByUser,
-            };
-          })
-        : [...current, message];
-      return next.sort((a, b) =>
-        new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
-      );
-    });
+    setMessages((current) => mergeChatMessages(current, [message]));
   }, []);
 
   const loadContext = useCallback(async (targetId: string) => {
@@ -414,6 +421,8 @@ const ChatRoom = () => {
     const data = await loadMessageContext(username, targetId);
     setChat(data.chat);
     setMessages(data.messages || []);
+    setNextCursor(data.nextCursor || null);
+    setHasMoreMessages(!!data.hasMore);
     setTimeout(() => scrollToMessage(targetId, data.messages || []), 120);
   }, [username]);
 
@@ -427,6 +436,8 @@ const ChatRoom = () => {
       const data = await loadChat(username);
       setChat(data.chat);
       setMessages(data.messages || []);
+      setNextCursor(data.nextCursor || null);
+      setHasMoreMessages(!!data.hasMore);
       if (data.chat?._id) markChatRead(data.chat._id).catch(() => {});
     } catch (err) {
       Alert.alert('Could not load chat', err instanceof Error ? err.message : 'Please try again.');
@@ -436,6 +447,22 @@ const ChatRoom = () => {
   useEffect(() => {
     loadConversation();
   }, [loadConversation]);
+
+  const loadOlderMessages = useCallback(async () => {
+    if (!username || !nextCursor || !hasMoreMessages || isLoadingOlder) return;
+    setIsLoadingOlder(true);
+    try {
+      const data = await loadChat(username, nextCursor);
+      setChat(data.chat);
+      setNextCursor(data.nextCursor || null);
+      setHasMoreMessages(!!data.hasMore);
+      setMessages((current) => mergeChatMessages(current, data.messages || []));
+    } catch {
+      // Keep the current page stable; the user can retry by scrolling to the top again.
+    } finally {
+      setIsLoadingOlder(false);
+    }
+  }, [hasMoreMessages, isLoadingOlder, nextCursor, username]);
 
   useEffect(() => {
     if (!chatId) return;
@@ -760,6 +787,11 @@ const ChatRoom = () => {
           data={messages}
           keyExtractor={messageId}
           contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end', padding: 12 }}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          scrollEventThrottle={120}
+          onScroll={({ nativeEvent }) => {
+            if (nativeEvent.contentOffset.y <= 40) loadOlderMessages();
+          }}
           onScrollToIndexFailed={({ index }) => {
             setTimeout(() => listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 }), 180);
           }}
@@ -789,6 +821,13 @@ const ChatRoom = () => {
                 A single hello is enough to make the room less awkward.
               </Text>
             </View>
+          )}
+          ListHeaderComponent={(
+            isLoadingOlder ? (
+              <View className="items-center py-3">
+                <ActivityIndicator color="#f33eb7" />
+              </View>
+            ) : null
           )}
         />
 

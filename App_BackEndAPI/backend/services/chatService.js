@@ -67,22 +67,72 @@ const serializeMessageSender = async (sender) => {
   return serializeParticipant(sender);
 };
 
-const summarizeReply = async (reply) => {
-  if (!reply) return null;
+const replyTextFor = (message = {}) => {
+  const content = typeof message.content === "string" ? message.content.trim() : "";
+  if (content) return content;
+  if (message.fileName) return message.fileName;
+  if (["image", "video", "audio", "file"].includes(message.type)) return "Attachment";
+  return "";
+};
+
+export const createReplySnapshot = (message) => {
+  if (!message?._id) return undefined;
+  const sender = typeof message.sender === "object" ? message.sender : null;
+  return {
+    messageId: message._id,
+    sender: sender?._id || message.sender,
+    senderUsername: sender?.username,
+    senderFirstName: sender?.firstName,
+    senderLastName: sender?.lastName,
+    senderProfilePicture: sender?.profilePicture,
+    senderProfilePictureThumb: sender?.profilePictureThumb,
+    type: message.type,
+    content: replyTextFor(message),
+    fileName: message.fileName,
+    createdAt: message.createdAt,
+  };
+};
+
+const serializeSnapshotSender = async (snapshot) => {
+  if (!snapshot?.senderUsername) return snapshot?.sender || null;
+  return {
+    _id: snapshot.sender,
+    username: snapshot.senderUsername,
+    firstName: snapshot.senderFirstName,
+    lastName: snapshot.senderLastName,
+    profilePicture: await signMediaUrl(snapshot.senderProfilePictureThumb || snapshot.senderProfilePicture, 300),
+  };
+};
+
+const summarizeSnapshot = async (snapshot) => {
+  if (!snapshot?.messageId) return null;
+  return {
+    _id: snapshot.messageId,
+    sender: await serializeSnapshotSender(snapshot),
+    type: snapshot.type || "text",
+    content: replyTextFor(snapshot) || "Message",
+    createdAt: snapshot.createdAt,
+    snapshot: true,
+  };
+};
+
+const summarizeReply = async (reply, snapshot) => {
+  if (!reply) return summarizeSnapshot(snapshot);
   let rawReply = reply;
-  if (typeof rawReply !== "object" || !rawReply.content) {
+  if (typeof rawReply !== "object" || (!rawReply.content && !rawReply.type)) {
     rawReply = await Message.findById(reply)
-      .select("sender type content createdAt")
+      .select("chat sender type content fileName createdAt")
       .populate("sender", "username firstName lastName profilePicture profilePictureThumb")
       .lean();
   }
-  if (!rawReply?.content) return null;
+  if (!rawReply) return summarizeSnapshot(snapshot);
   return {
-    _id: rawReply._id,
+    _id: rawReply._id || snapshot?.messageId,
+    chat: rawReply.chat,
     sender: await serializeMessageSender(rawReply.sender),
-    type: rawReply.type,
-    content: rawReply.content,
-    createdAt: rawReply.createdAt,
+    type: rawReply.type || snapshot?.type || "text",
+    content: replyTextFor(rawReply) || replyTextFor(snapshot) || "Message",
+    createdAt: rawReply.createdAt || snapshot?.createdAt,
   };
 };
 
@@ -91,7 +141,7 @@ export const serializeMessage = async (message) => {
   return {
     ...raw,
     sender: await serializeMessageSender(raw.sender),
-    replyTo: await summarizeReply(raw.replyTo),
+    replyTo: await summarizeReply(raw.replyTo, raw.replySnapshot),
     deliveredAtByUser: mapToObject(raw.deliveredAtByUser),
     seenAtByUser: mapToObject(raw.seenAtByUser),
     fileUrl: await signMediaUrl(raw.fileKey, 300),
@@ -167,7 +217,7 @@ export const loadMessagesPage = async ({ chatId, before, limit = 30, extraQuery 
     .populate("sender", "username firstName lastName profilePicture profilePictureThumb")
     .populate({
       path: "replyTo",
-      select: "sender type content createdAt",
+      select: "chat sender type content fileName createdAt",
       populate: { path: "sender", select: "username firstName lastName profilePicture profilePictureThumb" },
     })
     .lean();

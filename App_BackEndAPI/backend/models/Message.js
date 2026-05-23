@@ -14,6 +14,19 @@ const messageSchema = new mongoose.Schema({
   deliveredAtByUser: { type: Map, of: Date, default: {} },
   seenAtByUser: { type: Map, of: Date, default: {} },
   replyTo: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
+  replySnapshot: {
+    messageId: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
+    sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    senderUsername: { type: String },
+    senderFirstName: { type: String },
+    senderLastName: { type: String },
+    senderProfilePicture: { type: String },
+    senderProfilePictureThumb: { type: String },
+    type: { type: String },
+    content: { type: String },
+    fileName: { type: String },
+    createdAt: { type: Date },
+  },
   metadata: {
     links: [{
       url: { type: String },
@@ -33,6 +46,7 @@ const messageSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 messageSchema.index({ chat: 1, createdAt: -1 });
+messageSchema.index({ chat: 1, replyTo: 1 });
 messageSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0, sparse: true });
 messageSchema.index({ content: 'text' });
 
