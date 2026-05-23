@@ -7,6 +7,17 @@ import { pageFromItems } from "../utils/pagination.js";
 export const participantKeyFor = (ids) =>
   ids.map((id) => id.toString()).sort().join(":");
 
+export const extractLinks = (content = "") => {
+  const matches = content.match(/https?:\/\/[^\s<>()]+/gi) || [];
+  return [...new Set(matches)].slice(0, 8).map((url) => {
+    let host = "";
+    try {
+      host = new URL(url).hostname.replace(/^www\./, "");
+    } catch {}
+    return { url, host, type: "link" };
+  });
+};
+
 export const ensureDirectChat = async (currentUser, targetUser) => {
   const participants = [currentUser._id, targetUser._id];
   const participantKey = participantKeyFor(participants);
@@ -20,14 +31,61 @@ export const ensureDirectChat = async (currentUser, targetUser) => {
     lastMessageAt: new Date(),
   });
 
+  const startedAt = new Date();
+  const systemMessage = await Message.create({
+    chat: chat._id,
+    sender: currentUser._id,
+    type: "system",
+    content: `${currentUser.username} started the chat`,
+    deliveredTo: [currentUser._id],
+    seenBy: [currentUser._id],
+    deliveredAtByUser: new Map([[currentUser._id.toString(), startedAt]]),
+    seenAtByUser: new Map([[currentUser._id.toString(), startedAt]]),
+    systemEvent: {
+      type: "chat_started",
+      actor: currentUser._id,
+      payload: { username: currentUser.username },
+    },
+  });
+
+  chat.lastMessage = systemMessage._id;
+  chat.lastMessageAt = systemMessage.createdAt;
+  await chat.save();
+
   await User.updateMany({ _id: { $in: participants } }, { $addToSet: { chats: chat._id } });
   return chat;
+};
+
+const mapToObject = (value) => {
+  if (!value) return {};
+  if (value instanceof Map) return Object.fromEntries(value);
+  return value;
+};
+
+const serializeMessageSender = async (sender) => {
+  if (!sender || typeof sender !== "object" || !sender.username) return sender;
+  return serializeParticipant(sender);
+};
+
+const summarizeReply = async (reply) => {
+  if (!reply || typeof reply !== "object" || !reply.content) return reply || null;
+  return {
+    _id: reply._id,
+    sender: await serializeMessageSender(reply.sender),
+    type: reply.type,
+    content: reply.content,
+    createdAt: reply.createdAt,
+  };
 };
 
 export const serializeMessage = async (message) => {
   const raw = typeof message.toObject === "function" ? message.toObject() : message;
   return {
     ...raw,
+    sender: await serializeMessageSender(raw.sender),
+    replyTo: await summarizeReply(raw.replyTo),
+    deliveredAtByUser: mapToObject(raw.deliveredAtByUser),
+    seenAtByUser: mapToObject(raw.seenAtByUser),
     fileUrl: await signMediaUrl(raw.fileKey, 300),
   };
 };
@@ -64,6 +122,7 @@ export const serializeChat = async (chat, currentUserId) => {
       : raw.lastMessage || null,
     lastMessageAt: raw.lastMessageAt,
     unreadCount: currentUserId ? unreadCountFor(raw, currentUserId) : 0,
+    settings: raw.settings,
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
   };
@@ -97,21 +156,43 @@ export const loadMessagesPage = async ({ chatId, before, limit = 30 }) => {
   const messages = await Message.find(query)
     .sort({ createdAt: -1 })
     .limit(Math.min(Number(limit) || 30, 100) + 1)
-    .populate("sender", "username")
+    .populate("sender", "username firstName lastName profilePicture profilePictureThumb")
+    .populate({
+      path: "replyTo",
+      select: "sender type content createdAt",
+      populate: { path: "sender", select: "username firstName lastName profilePicture profilePictureThumb" },
+    })
     .lean();
 
   const page = pageFromItems(messages, Math.min(Number(limit) || 30, 100));
   return { ...page, items: page.items.reverse() };
 };
 
-export const markMessagesDelivered = async ({ chatId, userId }) =>
-  Message.updateMany(
+export const markMessagesDelivered = async ({ chatId, userId, at = new Date() }) => {
+  await Message.updateMany(
     { chat: chatId, sender: { $ne: userId }, deliveredTo: { $ne: userId } },
-    { $addToSet: { deliveredTo: userId } }
+    {
+      $addToSet: { deliveredTo: userId },
+      $set: { [`deliveredAtByUser.${userId.toString()}`]: at },
+    }
   );
+  return at;
+};
 
-export const markMessagesRead = async ({ chatId, userId }) =>
-  Message.updateMany(
-    { chat: chatId, sender: { $ne: userId }, seenBy: { $ne: userId } },
-    { $addToSet: { seenBy: userId } }
+export const markMessagesRead = async ({ chatId, userId, at = new Date() }) => {
+  await Message.updateMany(
+    { chat: chatId, sender: { $ne: userId }, deliveredTo: { $ne: userId } },
+    {
+      $addToSet: { deliveredTo: userId },
+      $set: { [`deliveredAtByUser.${userId.toString()}`]: at },
+    }
   );
+  await Message.updateMany(
+    { chat: chatId, sender: { $ne: userId }, seenBy: { $ne: userId } },
+    {
+      $addToSet: { seenBy: userId },
+      $set: { [`seenAtByUser.${userId.toString()}`]: at },
+    }
+  );
+  return at;
+};

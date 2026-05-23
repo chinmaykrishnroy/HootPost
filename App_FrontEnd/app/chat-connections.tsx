@@ -44,7 +44,7 @@ const ChatConnections = () => {
     setIsStarting(true);
     try {
       await startDirectChat(selectedUser.username);
-      router.replace({ pathname: '/chat', params: { started: selectedUser.username } });
+      router.replace('/chat');
     } catch (err) {
       Alert.alert('Could not start chat', err instanceof Error ? err.message : 'Please try again.');
     } finally {

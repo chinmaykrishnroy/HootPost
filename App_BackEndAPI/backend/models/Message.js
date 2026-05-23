@@ -11,7 +11,21 @@ const messageSchema = new mongoose.Schema({
   fileType: { type: String },
   seenBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   deliveredTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  deliveredAtByUser: { type: Map, of: Date, default: {} },
+  seenAtByUser: { type: Map, of: Date, default: {} },
   replyTo: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
+  metadata: {
+    links: [{
+      url: { type: String },
+      host: { type: String },
+      type: { type: String, default: 'link' },
+    }],
+  },
+  systemEvent: {
+    type: { type: String },
+    actor: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    payload: { type: mongoose.Schema.Types.Mixed },
+  },
   private: { type: Boolean, default: false },
   expiresAt: { type: Date },
   editedAt: { type: Date },

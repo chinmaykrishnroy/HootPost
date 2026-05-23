@@ -6,6 +6,7 @@ import { uploadAttachment } from "../services/mediaService.js";
 import {
   emitChatEvent,
   ensureDirectChat,
+  extractLinks,
   loadMessagesPage,
   markMessagesDelivered,
   markMessagesRead,
@@ -63,8 +64,8 @@ export const loadChat = asyncHandler(async (req, res) => {
     before: pagination.before,
     limit: pagination.limit,
   });
-  await markMessagesDelivered({ chatId: chat._id, userId: req.currentUser._id });
-  emitChatEvent(req.io, chat, "chat:delivered", { chatId: chat._id, userId: req.currentUser._id });
+  const deliveredAt = await markMessagesDelivered({ chatId: chat._id, userId: req.currentUser._id });
+  emitChatEvent(req.io, chat, "chat:delivered", { chatId: chat._id, userId: req.currentUser._id, at: deliveredAt });
 
   res.status(200).json({
     chat: await serializeChat(chat, req.currentUser._id),
@@ -84,12 +85,18 @@ export const deleteChat = asyncHandler(async (req, res) => {
 export const sendMessage = asyncHandler(async (req, res) => {
   const content = String(req.body.content || "").trim();
   const isPrivate = req.body.private === true || req.body.private === "true";
+  const replyTo = req.body.replyTo || null;
   if (!content && !req.file) throw badRequest("Message content or file must be provided.");
 
   const chat = await ensureDirectChat(req.currentUser, req.targetUser);
+  if (replyTo) {
+    const replyMessage = await Message.findOne({ _id: replyTo, chat: chat._id, deletedAt: null }).select("_id");
+    if (!replyMessage) throw badRequest("Reply target does not belong to this chat.");
+  }
   const attachment = req.file
     ? await uploadAttachment({ file: req.file, keyPrefix: `chat/${chat._id}`, ownerId: req.currentUser._id })
     : null;
+  const sentAt = new Date();
 
   const message = await Message.create({
     chat: chat._id,
@@ -100,9 +107,13 @@ export const sendMessage = asyncHandler(async (req, res) => {
     fileName: req.file?.originalname,
     fileSize: req.file?.size,
     fileType: attachment?.mime,
+    replyTo,
+    metadata: { links: extractLinks(content) },
     private: isPrivate,
     seenBy: [req.currentUser._id],
     deliveredTo: [req.currentUser._id],
+    deliveredAtByUser: new Map([[req.currentUser._id.toString(), sentAt]]),
+    seenAtByUser: new Map([[req.currentUser._id.toString(), sentAt]]),
     expiresAt: isPrivate
       ? new Date(Date.now() + (Number(req.body.expires) || 24 * 60) * 60 * 1000)
       : null,
@@ -118,7 +129,14 @@ export const sendMessage = asyncHandler(async (req, res) => {
   }
   await chat.save();
 
-  const hydrated = await Message.findById(message._id).populate("sender", "username").lean();
+  const hydrated = await Message.findById(message._id)
+    .populate("sender", "username firstName lastName profilePicture profilePictureThumb")
+    .populate({
+      path: "replyTo",
+      select: "sender type content createdAt",
+      populate: { path: "sender", select: "username firstName lastName profilePicture profilePictureThumb" },
+    })
+    .lean();
   const serialized = await serializeMessage(hydrated);
   emitChatEvent(req.io, chat, "message:new", { chatId: chat._id, message: serialized });
   res.status(201).json(serialized);
@@ -143,8 +161,8 @@ export const loadAllMessages = asyncHandler(async (req, res) => {
     before: pagination.before,
     limit: pagination.limit,
   });
-  await markMessagesDelivered({ chatId: chat._id, userId: req.currentUser._id });
-  emitChatEvent(req.io, chat, "chat:delivered", { chatId: chat._id, userId: req.currentUser._id });
+  const deliveredAt = await markMessagesDelivered({ chatId: chat._id, userId: req.currentUser._id });
+  emitChatEvent(req.io, chat, "chat:delivered", { chatId: chat._id, userId: req.currentUser._id, at: deliveredAt });
   const messages = await serializeMessages(page.items);
   res.status(200).json(pagination.paginated ? { ...page, items: messages } : messages);
 });
@@ -199,7 +217,12 @@ export const searchMessage = asyncHandler(async (req, res) => {
   })
     .sort({ score: { $meta: "textScore" } })
     .limit(50)
-    .populate("sender", "username")
+    .populate("sender", "username firstName lastName profilePicture profilePictureThumb")
+    .populate({
+      path: "replyTo",
+      select: "sender type content createdAt",
+      populate: { path: "sender", select: "username firstName lastName profilePicture profilePictureThumb" },
+    })
     .lean();
 
   res.status(200).json(await serializeMessages(messages));
@@ -211,8 +234,8 @@ export const markChatRead = asyncHandler(async (req, res) => {
 
   chat.unreadCounts.set(req.currentUser._id.toString(), 0);
   await chat.save();
-  await markMessagesRead({ chatId: chat._id, userId: req.currentUser._id });
+  const readAt = await markMessagesRead({ chatId: chat._id, userId: req.currentUser._id });
 
-  emitChatEvent(req.io, chat, "chat:read", { chatId: chat._id, userId: req.currentUser._id });
-  res.status(200).json({ success: "Chat marked as read." });
+  emitChatEvent(req.io, chat, "chat:read", { chatId: chat._id, userId: req.currentUser._id, at: readAt });
+  res.status(200).json({ success: "Chat marked as read.", at: readAt });
 });

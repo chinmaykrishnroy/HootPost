@@ -22,6 +22,7 @@ router.post('/:username/send', [
   isConnected,
   attachmentUpload.single('file'),
   body('content').optional().isLength({ max: 4000 }).withMessage('Message cannot exceed 4000 characters'),
+  body('replyTo').optional().isMongoId().withMessage('Reply target is invalid'),
   validateRequest,
 ], sendMessage);
 router.get('/:username/recentMessage', [auth, getCurrentUser, isConnected], getRecentMessage);

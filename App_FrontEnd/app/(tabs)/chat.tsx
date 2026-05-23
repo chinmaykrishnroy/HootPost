@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, Text, TouchableOpacity, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import HeaderBackButton from '@/components/HeaderBackButton';
@@ -21,22 +21,20 @@ const HeaderIconButton = ({ icon, onPress }: { icon: any; onPress: () => void })
   <TouchableOpacity
     activeOpacity={0.86}
     onPress={onPress}
-    className="h-9 px-3 rounded-xl bg-[#151515] border border-[#252525] items-center justify-center"
+    className="h-10 w-10 items-center justify-center"
   >
-    <Image source={icon} className="w-5 h-5" style={{ tintColor: '#f33eb7' }} />
+    <Image source={icon} className="w-6 h-6" style={{ tintColor: '#f33eb7' }} />
   </TouchableOpacity>
 );
 
 const Chat = () => {
   const navigation = useNavigation();
-  const params = useLocalSearchParams();
   const { user } = useGlobalContext();
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [searchText, setSearchText] = useState('');
-  const [toast, setToast] = useState('');
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
@@ -57,14 +55,6 @@ const Chat = () => {
       load();
     }, [load])
   );
-
-  useEffect(() => {
-    if (!params.started) return;
-    const username = Array.isArray(params.started) ? params.started[0] : params.started;
-    setToast(`${username} started the chat`);
-    const timer = setTimeout(() => setToast(''), 2400);
-    return () => clearTimeout(timer);
-  }, [params.started]);
 
   useEffect(() => {
     let mounted = true;
@@ -162,11 +152,6 @@ const Chat = () => {
 
   return (
     <View className="flex-1 bg-[#050505]">
-      {!!toast && (
-        <View className="absolute top-3 left-5 right-5 z-10 bg-primary-200 rounded-xl px-4 py-3">
-          <Text className="text-black text-center font-spotifymixuititle">{toast}</Text>
-        </View>
-      )}
       {error ? (
         <View className="flex-1 justify-center items-center px-8">
           <Text className="text-secondary-300 text-2xl text-center font-spotifymixuititle">Chats need a refresh</Text>
@@ -250,7 +235,7 @@ export const ChatScreenOptions = ({
   },
   headerRight: () =>
     isSearching ? null : (
-      <View className="flex-row gap-2 mr-4">
+      <View className="flex-row items-center gap-2 mr-4">
         <HeaderIconButton icon={icons.setting} onPress={() => {}} />
         <HeaderIconButton icon={icons.search} onPress={() => setIsSearching(true)} />
       </View>

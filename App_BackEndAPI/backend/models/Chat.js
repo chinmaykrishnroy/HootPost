@@ -9,6 +9,13 @@ const chatSchema = new mongoose.Schema({
   unreadCounts: { type: Map, of: Number, default: {} },
   mutedUntil: { type: Map, of: Date, default: {} },
   deletedAtByUser: { type: Map, of: Date, default: {} },
+  settings: {
+    selfDestruct: {
+      enabled: { type: Boolean, default: false },
+      durationSeconds: { type: Number, default: null },
+      startedAt: { type: Date, default: null },
+    },
+  },
 }, { timestamps: true });
 
 chatSchema.index({ participants: 1 });

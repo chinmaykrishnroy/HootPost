@@ -15,6 +15,17 @@ export type ChatMessage = {
   type: string;
   content?: string;
   fileUrl?: string | null;
+  replyTo?: ChatMessage | null;
+  metadata?: {
+    links?: { url: string; host?: string; type?: string }[];
+  };
+  deliveredAtByUser?: Record<string, string>;
+  seenAtByUser?: Record<string, string>;
+  systemEvent?: {
+    type?: string;
+    actor?: string;
+    payload?: Record<string, any>;
+  };
   createdAt: string;
   updatedAt?: string;
 };
@@ -26,6 +37,7 @@ export type ChatSummary = {
   lastMessage?: ChatMessage | null;
   lastMessageAt?: string;
   unreadCount?: number;
+  settings?: Record<string, any>;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -78,12 +90,12 @@ export const loadChat = async (username: string, before?: string | null) => {
   return readJson(response);
 };
 
-export const sendTextMessage = async (username: string, content: string): Promise<ChatMessage> => {
+export const sendTextMessage = async (username: string, content: string, replyTo?: string | null): Promise<ChatMessage> => {
   const response = await fetch(`${BASE_URL}/chat/${username}/send`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(replyTo ? { content, replyTo } : { content }),
   });
   return readJson(response);
 };
