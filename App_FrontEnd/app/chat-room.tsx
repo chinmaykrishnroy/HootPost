@@ -47,6 +47,31 @@ const messageId = (message: ChatMessage) => message._id || `${message.sender}-${
 const senderUsername = (message: ChatMessage) => typeof message.sender === 'object' ? message.sender?.username : '';
 const senderId = (message: ChatMessage) => typeof message.sender === 'object' ? message.sender?._id : message.sender;
 
+const hasReplyPreview = (reply: unknown): reply is ChatMessage =>
+  !!reply && typeof reply === 'object';
+
+const senderLabel = (message?: ChatMessage | null) => {
+  if (!message) return 'Message';
+  if (typeof message.sender === 'object') {
+    return message.sender?.firstName || message.sender?.username || 'Message';
+  }
+  return 'Message';
+};
+
+const replyPreviewFor = (message?: ChatMessage | null): ChatMessage | null => {
+  if (!message?._id) return null;
+  return {
+    _id: message._id,
+    chat: message.chat,
+    sender: message.sender,
+    type: message.type || 'text',
+    content: message.content || 'Attachment',
+    metadata: message.metadata,
+    createdAt: message.createdAt,
+    updatedAt: message.updatedAt,
+  };
+};
+
 const formatLocalTime = (value?: string) => {
   if (!value) return '';
   const date = new Date(value);
@@ -205,10 +230,8 @@ const MessageBubble = ({
   const deliveredAt = latestReceipt(item.deliveredAtByUser, currentUserId);
   const seenAt = latestReceipt(item.seenAtByUser, currentUserId);
   const mark = receiptMark(item, currentUserId);
-  const reply = typeof item.replyTo === 'object' ? item.replyTo : null;
-  const replySender = typeof reply?.sender === 'object'
-    ? reply.sender?.firstName || reply.sender?.username || 'Message'
-    : 'Message';
+  const reply = hasReplyPreview(item.replyTo) ? item.replyTo : null;
+  const replySender = senderLabel(reply);
 
   const panGesture = useMemo(() => Gesture.Pan()
     .activeOffsetX([-12, 12])
@@ -274,7 +297,7 @@ const MessageBubble = ({
         </Animated.View>
       )}
       <GestureDetector gesture={Gesture.Simultaneous(panGesture, longPressGesture)}>
-        <Animated.View style={[animatedStyle, { zIndex: 1 }]} className={`flex-row ${mine ? 'self-end flex-row-reverse' : 'self-start'} max-w-[94%]`}>
+        <Animated.View style={[animatedStyle, { zIndex: 1 }]} className={`flex-row ${mine ? 'self-end' : 'self-start'} max-w-[94%]`}>
           <ExpoImage source={avatar} style={{ width: 30, height: 30, borderRadius: 11, marginHorizontal: 6, marginTop: 4 }} contentFit="cover" />
           <View className={`max-w-[82%] ${mine ? 'items-end' : 'items-start'}`}>
             <View
@@ -364,8 +387,23 @@ const ChatRoom = () => {
 
   const mergeMessage = useCallback((message: ChatMessage) => {
     setMessages((current) => {
-      if (current.some((item) => messageId(item) === messageId(message))) return current;
-      return [...current, message].sort((a, b) =>
+      const id = messageId(message);
+      const existingIndex = current.findIndex((item) => messageId(item) === id);
+      const next = existingIndex >= 0
+        ? current.map((item, index) => {
+            if (index !== existingIndex) return item;
+            return {
+              ...item,
+              ...message,
+              sender: typeof message.sender === 'object' ? message.sender : item.sender,
+              replyTo: hasReplyPreview(message.replyTo) ? message.replyTo : item.replyTo,
+              metadata: message.metadata || item.metadata,
+              deliveredAtByUser: message.deliveredAtByUser || item.deliveredAtByUser,
+              seenAtByUser: message.seenAtByUser || item.seenAtByUser,
+            };
+          })
+        : [...current, message];
+      return next.sort((a, b) =>
         new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
       );
     });
@@ -532,6 +570,14 @@ const ChatRoom = () => {
     return participantById.get(message.sender) || participantByUsername.get(senderUsername(message));
   }, [participantById, participantByUsername]);
 
+  const senderForBubble = useCallback((message: ChatMessage, mine: boolean) => {
+    const messageSender = senderForMessage(message);
+    if (!mine) return messageSender;
+    if (messageSender?.profilePicture) return messageSender;
+    if (currentParticipant?.profilePicture) return currentParticipant;
+    return currentParticipant || messageSender;
+  }, [currentParticipant, senderForMessage]);
+
   function scrollToMessage(targetId?: string, source = messages) {
     if (!targetId) return;
     const index = source.findIndex((message) => message._id === targetId);
@@ -577,9 +623,13 @@ const ChatRoom = () => {
         setEditingMessage(null);
         return;
       }
-      const message = await sendTextMessage(username, content, replyingTo?._id);
+      const replyTarget = replyPreviewFor(replyingTo);
+      const message = await sendTextMessage(username, content, replyTarget?._id);
+      const messageWithReply = replyTarget && !hasReplyPreview(message.replyTo)
+        ? { ...message, replyTo: replyTarget }
+        : message;
       setReplyingTo(null);
-      mergeMessage(message);
+      mergeMessage(messageWithReply);
     } catch (err) {
       setInput(content);
       Alert.alert(editingMessage ? 'Edit failed' : 'Message not sent', err instanceof Error ? err.message : 'Please try again.');
@@ -685,7 +735,7 @@ const ChatRoom = () => {
                   style={{ width: 31, height: 31, borderRadius: 11, marginRight: 9, backgroundColor: '#111' }}
                   contentFit="cover"
                 />
-                <Text className="text-secondary-300 font-spotifymixuititle text-lg" numberOfLines={1}>
+                <Text className="text-secondary-300 font-spotifymixuititleextrabold text-2xl" numberOfLines={1}>
                   {otherParticipant?.firstName || firstName}
                 </Text>
               </TouchableOpacity>
@@ -720,7 +770,7 @@ const ChatRoom = () => {
                 item={item}
                 mine={mine}
                 currentUserId={user?.userId}
-                sender={mine ? currentParticipant || senderForMessage(item) : senderForMessage(item)}
+                sender={senderForBubble(item, mine)}
                 highlighted={highlightedId === item._id}
                 onReply={(message) => {
                   setEditingMessage(null);
@@ -747,8 +797,17 @@ const ChatRoom = () => {
         {!!replyingTo && !editingMessage && (
           <View className="mx-3 mb-2 bg-[#121212] border border-[#252525] rounded-2xl px-4 py-3 flex-row items-center">
             <TouchableOpacity className="flex-1" activeOpacity={0.8} onPress={() => jumpToMessage(replyingTo._id)}>
-              <Text className="text-primary-200 font-spotifymixuititle text-xs">Replying to message</Text>
-              <Text className="text-gray-300 font-spotifymixui" numberOfLines={2}>{replyingTo.content}</Text>
+              <View className="overflow-hidden rounded-xl bg-black/20 flex-row">
+                <View className="w-1 bg-primary-200" />
+                <View className="flex-1 px-3 py-2">
+                  <Text className="text-primary-200 font-spotifymixuititle text-xs" numberOfLines={1}>
+                    {senderLabel(replyingTo)}
+                  </Text>
+                  <Text className="text-gray-300 font-spotifymixui" numberOfLines={2}>
+                    {replyingTo.content || 'Attachment'}
+                  </Text>
+                </View>
+              </View>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setReplyingTo(null)} className="w-8 h-8 items-center justify-center">
               <Feather name="x" size={20} color="#f33eb7" />
