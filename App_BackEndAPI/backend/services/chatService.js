@@ -59,6 +59,7 @@ export const ensureDirectChat = async (currentUser, targetUser) => {
 const mapToObject = (value) => {
   if (!value) return {};
   if (value instanceof Map) return Object.fromEntries(value);
+  if (typeof value.toObject === "function") return value.toObject();
   return value;
 };
 
@@ -239,7 +240,7 @@ export const markMessagesDelivered = async ({ chatId, userId, at = new Date() })
 
 export const markMessagesRead = async ({ chatId, userId, at = new Date() }) => {
   await Message.updateMany(
-    { chat: chatId, sender: { $ne: userId }, deliveredTo: { $ne: userId } },
+    { chat: chatId, sender: { $ne: userId } },
     {
       $addToSet: { deliveredTo: userId },
       $set: { [`deliveredAtByUser.${userId.toString()}`]: at },

@@ -8,6 +8,10 @@ export type ChatParticipant = {
   profilePicture?: string | null;
 };
 
+export type UserProfileSummary = ChatParticipant & {
+  profilePicture?: string | null;
+};
+
 export type ChatMessage = {
   _id: string;
   chat: string;
@@ -88,6 +92,23 @@ export const loadChat = async (username: string, before?: string | null) => {
     credentials: 'include',
   });
   return readJson(response);
+};
+
+export const loadUserProfileSummary = async (username: string): Promise<UserProfileSummary | null> => {
+  const response = await fetch(`${BASE_URL}/users/${username}/complete`, {
+    method: 'GET',
+    credentials: 'include',
+  });
+  const data = await readJson(response);
+  return data
+    ? {
+        _id: data._id,
+        username: data.username,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        profilePicture: data.profilePicture || null,
+      }
+    : null;
 };
 
 export const loadMessageContext = async (username: string, messageId: string) => {

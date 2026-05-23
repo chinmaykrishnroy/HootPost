@@ -32,6 +32,7 @@ import {
   deleteTextMessage,
   loadChat,
   loadMessageContext,
+  loadUserProfileSummary,
   markChatRead,
   searchChatMessages,
   sendTextMessage,
@@ -110,10 +111,15 @@ const formatDetailTime = (value?: string) => {
   return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
 
-const latestReceipt = (receipts?: Record<string, string>, excludeUserId?: string) => {
+const latestReceipt = (receipts?: Record<string, any>, excludeUserId?: string) => {
   const values = Object.entries(receipts || {})
     .filter(([userId]) => userId !== excludeUserId)
-    .map(([, value]) => value)
+    .map(([, value]) => {
+      if (typeof value === 'string') return value;
+      if (value instanceof Date) return value.toISOString();
+      if (value && typeof value === 'object' && '$date' in value) return String((value as any).$date);
+      return String(value || '');
+    })
     .filter(Boolean)
     .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
   return values[0];
@@ -251,8 +257,8 @@ const MessageBubble = ({
   const startX = useSharedValue(0);
   const avatar = sender?.profilePicture ? { uri: sender.profilePicture } : images.owl;
   const displayedTime = mine ? item.createdAt : item.deliveredAtByUser?.[currentUserId || ''] || item.createdAt;
-  const deliveredAt = latestReceipt(item.deliveredAtByUser, currentUserId);
   const seenAt = latestReceipt(item.seenAtByUser, currentUserId);
+  const deliveredAt = latestReceipt(item.deliveredAtByUser, currentUserId) || seenAt;
   const mark = receiptMark(item, currentUserId);
   const reply = hasReplyPreview(item.replyTo) ? item.replyTo : null;
   const replySender = senderLabel(reply);
@@ -275,10 +281,6 @@ const MessageBubble = ({
       if (!wasOpen && event.translationX < -56) {
         runOnJS(onReply)(item);
         translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
-        return;
-      }
-      if (mine && startX.value + event.translationX > 56) {
-        translateX.value = withSpring(132, { damping: 18, stiffness: 220 });
         return;
       }
       translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
@@ -406,6 +408,7 @@ const ChatRoom = () => {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [profilePictureByUsername, setProfilePictureByUsername] = useState<Record<string, string>>({});
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const inputRef = useRef<TextInput>(null);
   const socketRef = useRef<Awaited<ReturnType<typeof getRealtimeSocket>> | null>(null);
@@ -447,6 +450,28 @@ const ChatRoom = () => {
   useEffect(() => {
     loadConversation();
   }, [loadConversation]);
+
+  useEffect(() => {
+    const knownPictures = new Map<string, string>();
+    chat?.participants?.forEach((participant) => {
+      if (participant.username && participant.profilePicture) {
+        knownPictures.set(participant.username, participant.profilePicture);
+      }
+    });
+
+    const usernames = [username, user?.username].filter(Boolean) as string[];
+    usernames.forEach((name) => {
+      if (knownPictures.get(name) || profilePictureByUsername[name]) return;
+      loadUserProfileSummary(name)
+        .then((profile) => {
+          if (!profile?.profilePicture) return;
+          setProfilePictureByUsername((current) => (
+            current[name] ? current : { ...current, [name]: profile.profilePicture as string }
+          ));
+        })
+        .catch(() => {});
+    });
+  }, [chat?.participants, profilePictureByUsername, user?.username, username]);
 
   const loadOlderMessages = useCallback(async () => {
     if (!username || !nextCursor || !hasMoreMessages || isLoadingOlder) return;
@@ -592,6 +617,33 @@ const ChatRoom = () => {
       || chat?.participants?.[0]
   ), [chat?.participants, participantByUsername, user?.username, username]);
 
+  const currentDisplayParticipant = useMemo(() => {
+    const fallbackPicture = user?.username ? profilePictureByUsername[user.username] : undefined;
+    if (currentParticipant) {
+      return {
+        ...currentParticipant,
+        profilePicture: currentParticipant.profilePicture || fallbackPicture,
+      };
+    }
+    return user?.username
+      ? { _id: user.userId, username: user.username, profilePicture: fallbackPicture }
+      : undefined;
+  }, [currentParticipant, profilePictureByUsername, user?.userId, user?.username]);
+
+  const otherDisplayParticipant = useMemo(() => {
+    const fallbackName = otherParticipant?.username || username;
+    const fallbackPicture = fallbackName ? profilePictureByUsername[fallbackName] : undefined;
+    if (otherParticipant) {
+      return {
+        ...otherParticipant,
+        profilePicture: otherParticipant.profilePicture || fallbackPicture,
+      };
+    }
+    return fallbackName
+      ? { _id: fallbackName, username: fallbackName, firstName, profilePicture: fallbackPicture }
+      : undefined;
+  }, [firstName, otherParticipant, profilePictureByUsername, username]);
+
   const senderForMessage = useCallback((message: ChatMessage) => {
     if (typeof message.sender === 'object') return message.sender;
     return participantById.get(message.sender) || participantByUsername.get(senderUsername(message));
@@ -599,11 +651,17 @@ const ChatRoom = () => {
 
   const senderForBubble = useCallback((message: ChatMessage, mine: boolean) => {
     const messageSender = senderForMessage(message);
-    if (!mine) return messageSender;
-    if (messageSender?.profilePicture) return messageSender;
-    if (currentParticipant?.profilePicture) return currentParticipant;
-    return currentParticipant || messageSender;
-  }, [currentParticipant, senderForMessage]);
+    const fallbackUsername = messageSender?.username || senderUsername(message) || (mine ? user?.username : username);
+    const fallbackPicture = fallbackUsername ? profilePictureByUsername[fallbackUsername] : undefined;
+    const senderWithFallback = messageSender
+      ? { ...messageSender, profilePicture: messageSender.profilePicture || fallbackPicture }
+      : fallbackUsername
+        ? { _id: String(senderId(message) || fallbackUsername), username: fallbackUsername, profilePicture: fallbackPicture }
+        : undefined;
+    if (!mine) return senderWithFallback;
+    if (senderWithFallback?.profilePicture) return senderWithFallback;
+    return currentDisplayParticipant || senderWithFallback;
+  }, [currentDisplayParticipant, profilePictureByUsername, senderForMessage, user?.username, username]);
 
   function scrollToMessage(targetId?: string, source = messages) {
     if (!targetId) return;
@@ -669,7 +727,7 @@ const ChatRoom = () => {
     if (!chatId || !username) return;
     router.push({
       pathname: '/chat-attachments',
-      params: { chatId, username, title: otherParticipant?.firstName || firstName },
+      params: { chatId, username, title: otherDisplayParticipant?.firstName || firstName },
     });
   };
 
@@ -680,7 +738,7 @@ const ChatRoom = () => {
       params: {
         username,
         chatId,
-        title: otherParticipant?.firstName || firstName,
+        title: otherDisplayParticipant?.firstName || firstName,
       },
     });
   };
@@ -758,12 +816,12 @@ const ChatRoom = () => {
                 className="flex-1 h-10 flex-row items-center bg-[#050505] px-2 ml-3"
               >
                 <ExpoImage
-                  source={otherParticipant?.profilePicture ? { uri: otherParticipant.profilePicture } : images.owl}
+                  source={otherDisplayParticipant?.profilePicture ? { uri: otherDisplayParticipant.profilePicture } : images.owl}
                   style={{ width: 31, height: 31, borderRadius: 11, marginRight: 9, backgroundColor: '#111' }}
                   contentFit="cover"
                 />
                 <Text className="text-secondary-300 font-spotifymixuititleextrabold text-2xl" numberOfLines={1}>
-                  {otherParticipant?.firstName || firstName}
+                  {otherDisplayParticipant?.firstName || firstName}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity activeOpacity={0.86} onPress={() => setIsSearching(true)} className="h-10 w-10 items-center justify-center ml-2">
