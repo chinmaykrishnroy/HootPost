@@ -29,6 +29,7 @@ import {
   ChatMessage,
   ChatParticipant,
   ChatSummary,
+  ReplySnapshotPayload,
   deleteTextMessage,
   loadChat,
   loadMessageContext,
@@ -49,6 +50,13 @@ const messageId = (message: ChatMessage) => message._id || `${message.sender}-${
 const senderUsername = (message: ChatMessage) => typeof message.sender === 'object' ? message.sender?.username : '';
 const senderId = (message: ChatMessage) => typeof message.sender === 'object' ? message.sender?._id : message.sender;
 
+const normalizedId = (value: any): string | null => {
+  if (!value) return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') return value._id || value.messageId || value.$oid || null;
+  return String(value);
+};
+
 const hasReplyPreview = (reply: unknown): reply is ChatMessage =>
   !!reply && typeof reply === 'object';
 
@@ -61,9 +69,10 @@ const senderLabel = (message?: ChatMessage | null) => {
 };
 
 const replyPreviewFor = (message?: ChatMessage | null): ChatMessage | null => {
-  if (!message?._id) return null;
+  const id = normalizedId(message?._id);
+  if (!message || !id) return null;
   return {
-    _id: message._id,
+    _id: id,
     chat: message.chat,
     sender: message.sender,
     type: message.type || 'text',
@@ -71,6 +80,21 @@ const replyPreviewFor = (message?: ChatMessage | null): ChatMessage | null => {
     metadata: message.metadata,
     createdAt: message.createdAt,
     updatedAt: message.updatedAt,
+  };
+};
+
+const replySnapshotPayloadFor = (message?: ChatMessage | null): ReplySnapshotPayload | null => {
+  const id = normalizedId(message?._id);
+  if (!message || !id) return null;
+  const sender = typeof message.sender === 'object' ? message.sender : null;
+  return {
+    messageId: id,
+    senderUsername: sender?.username || senderUsername(message),
+    senderFirstName: sender?.firstName,
+    senderLastName: sender?.lastName,
+    type: message.type || 'text',
+    content: message.content || 'Attachment',
+    createdAt: message.createdAt,
   };
 };
 
@@ -323,7 +347,7 @@ const MessageBubble = ({
         </Animated.View>
       )}
       <GestureDetector gesture={Gesture.Simultaneous(panGesture, longPressGesture)}>
-        <Animated.View style={[animatedStyle, { zIndex: 1 }]} className={`flex-row ${mine ? 'self-end' : 'self-start'} max-w-[94%]`}>
+        <Animated.View style={[animatedStyle, { zIndex: 1 }]} className={`flex-row ${mine ? 'self-end flex-row-reverse' : 'self-start'} max-w-[94%]`}>
           <ExpoImage source={avatar} style={{ width: 30, height: 30, borderRadius: 11, marginHorizontal: 6, marginTop: 4 }} contentFit="cover" />
           <View className={`max-w-[82%] ${mine ? 'items-end' : 'items-start'}`}>
             <View
@@ -709,7 +733,8 @@ const ChatRoom = () => {
         return;
       }
       const replyTarget = replyPreviewFor(replyingTo);
-      const message = await sendTextMessage(username, content, replyTarget?._id);
+      const replySnapshot = replySnapshotPayloadFor(replyingTo);
+      const message = await sendTextMessage(username, content, replyTarget?._id || replySnapshot?.messageId || null, replySnapshot);
       const messageWithReply = replyTarget && !hasReplyPreview(message.replyTo)
         ? { ...message, replyTo: replyTarget }
         : message;

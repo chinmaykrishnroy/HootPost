@@ -28,6 +28,13 @@ const findDirectChat = async (currentUser, targetUser) => {
   return chat;
 };
 
+const mongoIdFromPayload = (value) => {
+  if (!value) return null;
+  if (typeof value === "string") return value;
+  if (typeof value === "object") return value._id || value.messageId || value.$oid || null;
+  return String(value);
+};
+
 export const listChats = asyncHandler(async (req, res) => {
   const chats = await Chat.find({ participants: req.currentUser._id })
     .sort({ lastMessageAt: -1, updatedAt: -1 })
@@ -86,7 +93,7 @@ export const deleteChat = asyncHandler(async (req, res) => {
 export const sendMessage = asyncHandler(async (req, res) => {
   const content = String(req.body.content || "").trim();
   const isPrivate = req.body.private === true || req.body.private === "true";
-  const replyTo = req.body.replyTo || null;
+  const replyTo = mongoIdFromPayload(req.body.replyTo) || mongoIdFromPayload(req.body.replySnapshot?.messageId);
   if (!content && !req.file) throw badRequest("Message content or file must be provided.");
 
   const chat = await ensureDirectChat(req.currentUser, req.targetUser);

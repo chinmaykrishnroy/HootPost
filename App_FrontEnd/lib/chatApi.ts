@@ -34,6 +34,16 @@ export type ChatMessage = {
   updatedAt?: string;
 };
 
+export type ReplySnapshotPayload = {
+  messageId: string;
+  senderUsername?: string;
+  senderFirstName?: string;
+  senderLastName?: string;
+  type?: string;
+  content?: string;
+  createdAt?: string;
+};
+
 export type ChatSummary = {
   _id: string;
   participants: ChatParticipant[];
@@ -119,12 +129,20 @@ export const loadMessageContext = async (username: string, messageId: string) =>
   return readJson(response);
 };
 
-export const sendTextMessage = async (username: string, content: string, replyTo?: string | null): Promise<ChatMessage> => {
+export const sendTextMessage = async (
+  username: string,
+  content: string,
+  replyTo?: string | null,
+  replySnapshot?: ReplySnapshotPayload | null
+): Promise<ChatMessage> => {
+  const body: Record<string, any> = { content };
+  if (replyTo) body.replyTo = replyTo;
+  if (replySnapshot?.messageId) body.replySnapshot = replySnapshot;
   const response = await fetch(`${BASE_URL}/chat/${username}/send`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(replyTo ? { content, replyTo } : { content }),
+    body: JSON.stringify(body),
   });
   return readJson(response);
 };

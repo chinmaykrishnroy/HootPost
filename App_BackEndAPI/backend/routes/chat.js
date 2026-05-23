@@ -11,6 +11,13 @@ import {startChat, loadChat, deleteChat, sendMessage, getRecentMessage, loadAllM
 
 const router = express.Router({ mergeParams: true });
 
+const mongoIdFromPayload = (value) => {
+  if (!value) return undefined;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') return value._id || value.messageId || value.$oid;
+  return String(value);
+};
+
 router.get('/conversations', [auth, getCurrentUser], listChats);
 router.post('/conversations/:chatId/read', [auth, getCurrentUser, param('chatId').isMongoId(), validateRequest], markChatRead);
 router.get('/conversations/:chatId/attachments', [auth, getCurrentUser, param('chatId').isMongoId(), validateRequest], listChatAttachments);
@@ -23,7 +30,8 @@ router.post('/:username/send', [
   isConnected,
   attachmentUpload.single('file'),
   body('content').optional().isLength({ max: 4000 }).withMessage('Message cannot exceed 4000 characters'),
-  body('replyTo').optional().isMongoId().withMessage('Reply target is invalid'),
+  body('replyTo').optional({ values: 'falsy' }).customSanitizer(mongoIdFromPayload).isMongoId().withMessage('Reply target is invalid'),
+  body('replySnapshot.messageId').optional({ values: 'falsy' }).customSanitizer(mongoIdFromPayload).isMongoId().withMessage('Reply target is invalid'),
   validateRequest,
 ], sendMessage);
 router.get('/:username/recentMessage', [auth, getCurrentUser, isConnected], getRecentMessage);
