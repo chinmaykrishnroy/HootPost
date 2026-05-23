@@ -167,6 +167,47 @@ export const loadAllMessages = asyncHandler(async (req, res) => {
   res.status(200).json(pagination.paginated ? { ...page, items: messages } : messages);
 });
 
+export const loadMessageContext = asyncHandler(async (req, res) => {
+  const chat = await findDirectChat(req.currentUser, req.targetUser);
+  const target = await Message.findOne({ _id: req.params.messageId, chat: chat._id, deletedAt: null }).lean();
+  if (!target) throw notFound("Message not found.");
+
+  const populate = [
+    { path: "sender", select: "username firstName lastName profilePicture profilePictureThumb" },
+    {
+      path: "replyTo",
+      select: "sender type content createdAt",
+      populate: { path: "sender", select: "username firstName lastName profilePicture profilePictureThumb" },
+    },
+  ];
+  const [older, newer] = await Promise.all([
+    Message.find({ chat: chat._id, deletedAt: null, createdAt: { $lte: target.createdAt } })
+      .sort({ createdAt: -1 })
+      .limit(25)
+      .populate(populate)
+      .lean(),
+    Message.find({ chat: chat._id, deletedAt: null, createdAt: { $gt: target.createdAt } })
+      .sort({ createdAt: 1 })
+      .limit(25)
+      .populate(populate)
+      .lean(),
+  ]);
+  const ordered = [...older.reverse(), ...newer];
+  const seen = new Set();
+  const unique = ordered.filter((message) => {
+    const id = message._id.toString();
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+
+  res.status(200).json({
+    chat: await serializeChat(chat, req.currentUser._id),
+    messages: await serializeMessages(unique),
+    focusMessageId: req.params.messageId,
+  });
+});
+
 export const deleteMessage = asyncHandler(async (req, res) => {
   const chat = await findDirectChat(req.currentUser, req.targetUser);
   const message = await Message.findOne({ _id: req.params.messageId, chat: chat._id });
@@ -189,9 +230,18 @@ export const updateMessage = asyncHandler(async (req, res) => {
   if (!message.sender.equals(req.currentUser._id)) throw forbidden("Only the sender can update this message.");
 
   message.content = content;
+  message.metadata = { links: extractLinks(content) };
   message.editedAt = new Date();
   await message.save();
-  const serialized = await serializeMessage(message);
+  const hydrated = await Message.findById(message._id)
+    .populate("sender", "username firstName lastName profilePicture profilePictureThumb")
+    .populate({
+      path: "replyTo",
+      select: "sender type content createdAt",
+      populate: { path: "sender", select: "username firstName lastName profilePicture profilePictureThumb" },
+    })
+    .lean();
+  const serialized = await serializeMessage(hydrated);
   emitChatEvent(req.io, chat, "message:updated", { chatId: chat._id, message: serialized });
   res.status(200).json(serialized);
 });
@@ -213,6 +263,7 @@ export const searchMessage = asyncHandler(async (req, res) => {
   const messages = await Message.find({
     chat: chat._id,
     deletedAt: null,
+    type: { $ne: "system" },
     $text: { $search: query },
   })
     .sort({ score: { $meta: "textScore" } })
@@ -225,7 +276,36 @@ export const searchMessage = asyncHandler(async (req, res) => {
     })
     .lean();
 
-  res.status(200).json(await serializeMessages(messages));
+  res.status(200).json({ items: await serializeMessages(messages) });
+});
+
+export const listChatAttachments = asyncHandler(async (req, res) => {
+  const type = String(req.query.type || "media");
+  const chat = await Chat.findOne({ _id: req.params.chatId, participants: req.currentUser._id });
+  if (!chat) throw notFound("Chat not found.");
+
+  const query = { chat: chat._id, deletedAt: null };
+  if (type === "links") {
+    query["metadata.links.0"] = { $exists: true };
+  } else if (type === "files") {
+    query.fileKey = { $exists: true };
+    query.type = { $nin: ["image", "video"] };
+  } else {
+    query.type = { $in: ["image", "video"] };
+  }
+
+  const pagination = parsePagination(req.query, { defaultLimit: 40 });
+  const page = await loadMessagesPage({
+    chatId: chat._id,
+    before: pagination.before,
+    limit: pagination.limit,
+    extraQuery: query,
+  });
+  res.status(200).json({
+    items: await serializeMessages(page.items),
+    nextCursor: page.nextCursor,
+    hasMore: page.hasMore,
+  });
 });
 
 export const markChatRead = asyncHandler(async (req, res) => {

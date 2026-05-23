@@ -90,6 +90,14 @@ export const loadChat = async (username: string, before?: string | null) => {
   return readJson(response);
 };
 
+export const loadMessageContext = async (username: string, messageId: string) => {
+  const response = await fetch(`${BASE_URL}/chat/${username}/message/${messageId}/context`, {
+    method: 'GET',
+    credentials: 'include',
+  });
+  return readJson(response);
+};
+
 export const sendTextMessage = async (username: string, content: string, replyTo?: string | null): Promise<ChatMessage> => {
   const response = await fetch(`${BASE_URL}/chat/${username}/send`, {
     method: 'POST',
@@ -98,6 +106,42 @@ export const sendTextMessage = async (username: string, content: string, replyTo
     body: JSON.stringify(replyTo ? { content, replyTo } : { content }),
   });
   return readJson(response);
+};
+
+export const updateTextMessage = async (username: string, messageId: string, content: string): Promise<ChatMessage> => {
+  const response = await fetch(`${BASE_URL}/chat/${username}/message/${messageId}`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  return readJson(response);
+};
+
+export const deleteTextMessage = async (username: string, messageId: string) => {
+  const response = await fetch(`${BASE_URL}/chat/${username}/message/${messageId}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  return readJson(response);
+};
+
+export const searchChatMessages = async (username: string, query: string): Promise<ChatMessage[]> => {
+  const response = await fetch(`${BASE_URL}/chat/${username}/searchMessages?query=${encodeURIComponent(query)}`, {
+    method: 'GET',
+    credentials: 'include',
+  });
+  const data = await readJson(response);
+  return Array.isArray(data) ? data : data.items || [];
+};
+
+export const listChatAttachments = async (chatId: string, type: 'media' | 'files' | 'links'): Promise<ChatMessage[]> => {
+  const response = await fetch(`${BASE_URL}/chat/conversations/${chatId}/attachments?type=${type}`, {
+    method: 'GET',
+    credentials: 'include',
+  });
+  const data = await readJson(response);
+  return data.items || [];
 };
 
 export const markChatRead = async (chatId: string) => {

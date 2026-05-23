@@ -146,9 +146,9 @@ export const messageTypeFromMime = (mime = "") => {
   return ["image", "video", "audio"].includes(family) ? family : "file";
 };
 
-export const loadMessagesPage = async ({ chatId, before, limit = 30 }) => {
+export const loadMessagesPage = async ({ chatId, before, limit = 30, extraQuery = null }) => {
   const createdBefore = before ? new Date(before) : null;
-  const query = { chat: chatId, deletedAt: null };
+  const query = extraQuery || { chat: chatId, deletedAt: null };
   if (createdBefore && !Number.isNaN(createdBefore.getTime())) {
     query.createdAt = { $lt: createdBefore };
   }
