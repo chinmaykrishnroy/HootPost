@@ -2,6 +2,8 @@ node_modules/
 .expo/
 .env
 dist/
+.build-tools/
+.tmp/
 npm-debug.*
 *.jks
 *.p8
